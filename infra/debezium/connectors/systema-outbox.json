@@ -1,0 +1,36 @@
+{
+  "name": "systema-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+    "database.hostname": "sqlserver",
+    "database.port": "1433",
+    "database.user": "sa",
+    "database.password": "${file:/kafka/external-config/dbz-secrets.properties:database.password}",
+    "database.names": "DB_SYSTEMA",
+    "table.include.list": "DB_SYSTEMA.dbo.SpiOutbox",
+    "database.server.name": "systema",
+    "topic.prefix": "systema",
+    "snapshot.mode": "initial",
+    "snapshot.isolation.mode": "read_committed",
+
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "MessageId",
+    "transforms.outbox.table.field.event.key": "IdSystemA",
+    "transforms.outbox.table.field.event.payload": "Payload",
+    "transforms.outbox.table.field.event.payload.id": "IdSystemA",
+    "transforms.outbox.route.topic.replacement": "spi.systema.responses",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": false,
+
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "spi.systema.responses.dlq",
+    "errors.deadletterqueue.topic.replication.factor": 1,
+    "errors.deadletterqueue.context.headers.enable": true,
+
+    "heartbeat.interval.ms": "5000",
+    "poll.interval.ms": "500"
+  }
+}

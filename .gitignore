@@ -1,0 +1,27 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+
+## NuGet
+*.nupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## Secrets & certs
+.env
+certs/dev/*.pfx
+certs/dev/*.pem
+
+## Build output
+TestResults/
+coverage/
+
+## OS
+.DS_Store
+Thumbs.db

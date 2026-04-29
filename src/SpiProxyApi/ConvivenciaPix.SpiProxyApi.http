@@ -1,0 +1,6 @@
+@ConvivenciaPix.SpiProxyApi_HostAddress = http://localhost:5152
+
+GET {{ConvivenciaPix.SpiProxyApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
