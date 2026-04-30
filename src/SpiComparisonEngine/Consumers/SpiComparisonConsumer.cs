@@ -1,0 +1,136 @@
+using Confluent.Kafka;
+using ConvivenciaPix.Application.DTOs;
+using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Domain.Events;
+using ConvivenciaPix.Infrastructure.Messaging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System.Text;
+using System.Text.Json;
+
+namespace ConvivenciaPix.SpiComparisonEngine.Consumers;
+
+/// <summary>
+/// Compares business fields (Amount, PayerId, PayeeId) from System A and System B SPI messages.
+/// Publishes a SpiDiscrepancyDetected event to spi.discrepancies when any field mismatches.
+/// Ignores transaction-specific identifiers (EndToEndId, MessageId) since they are system-generated.
+/// </summary>
+public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
+{
+    private readonly ISpiXmlParser _xmlParser;
+    private readonly IKafkaPublisher _publisher;
+    private readonly ILogger<SpiComparisonConsumer> _logger;
+
+    public SpiComparisonConsumer(
+        IConfiguration configuration,
+        IProducer<string, string> dlqProducer,
+        ISpiXmlParser xmlParser,
+        IKafkaPublisher publisher,
+        ILogger<SpiComparisonConsumer> logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.ComparisonEvents, logger)
+    {
+        _xmlParser = xmlParser;
+        _publisher = publisher;
+        _logger = logger;
+    }
+
+    protected override async Task ProcessMessageAsync(
+        ConsumeResult<string, string> result, CancellationToken cancellationToken)
+    {
+        var envelope = JsonSerializer.Deserialize<KafkaEnvelope>(result.Message.Value)
+            ?? throw new InvalidOperationException("Failed to deserialize KafkaEnvelope from ComparisonEvents");
+
+        var comparisonEvent = JsonSerializer.Deserialize<SpiComparisonEventDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(envelope.PayloadBase64)))
+            ?? throw new InvalidOperationException("Failed to deserialize SpiComparisonEventDto");
+
+        var discrepancies = CompareFields(comparisonEvent);
+
+        _logger.LogComparisonResult(
+            comparisonEvent.IdSystemA, comparisonEvent.IdSystemB,
+            discrepancies.Count, comparisonEvent.CorrelationSource);
+
+        if (discrepancies.Count > 0)
+            await PublishDiscrepancyAsync(comparisonEvent, discrepancies, cancellationToken);
+    }
+
+    private List<DiscrepancyRecord> CompareFields(SpiComparisonEventDto ev)
+    {
+        var discrepancies = new List<DiscrepancyRecord>();
+
+        CompareField(discrepancies, "Amount",
+            SafeExtract(() => _xmlParser.ExtractAmount(ev.SystemAXml).ToString("F2")),
+            SafeExtract(() => _xmlParser.ExtractAmount(ev.SystemBXml).ToString("F2")));
+
+        CompareField(discrepancies, "PayerId",
+            SafeExtract(() => _xmlParser.ExtractPayerId(ev.SystemAXml)),
+            SafeExtract(() => _xmlParser.ExtractPayerId(ev.SystemBXml)));
+
+        CompareField(discrepancies, "PayeeId",
+            SafeExtract(() => _xmlParser.ExtractPayeeId(ev.SystemAXml)),
+            SafeExtract(() => _xmlParser.ExtractPayeeId(ev.SystemBXml)));
+
+        return discrepancies;
+    }
+
+    private static void CompareField(
+        List<DiscrepancyRecord> discrepancies, string fieldName,
+        string? valueA, string? valueB)
+    {
+        if (valueA != valueB)
+            discrepancies.Add(new DiscrepancyRecord(fieldName, valueA, valueB));
+    }
+
+    private static string? SafeExtract(Func<string> extract)
+    {
+        try { return extract(); }
+        catch { return null; }
+    }
+
+    private async Task PublishDiscrepancyAsync(
+        SpiComparisonEventDto ev,
+        List<DiscrepancyRecord> discrepancies,
+        CancellationToken cancellationToken)
+    {
+        var discrepancyEvent = new SpiDiscrepancyDetected(
+            IdSystemA: ev.IdSystemA,
+            IdSystemB: ev.IdSystemB,
+            CorrelationSource: ev.CorrelationSource,
+            Discrepancies: discrepancies,
+            DetectedAt: DateTimeOffset.UtcNow);
+
+        var envelope = new KafkaEnvelope(
+            MessageId: Guid.NewGuid().ToString(),
+            PayloadBase64: Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(JsonSerializer.Serialize(discrepancyEvent))),
+            Timestamp: DateTimeOffset.UtcNow,
+            CorrelationId: ev.IdSystemA);
+
+        await _publisher.PublishAsync(Topics.Discrepancies, envelope, cancellationToken);
+
+        _logger.LogDiscrepancyPublished(ev.IdSystemA, ev.IdSystemB, discrepancies.Count);
+    }
+
+    private static IConsumer<string, string> BuildConsumer(IConfiguration configuration) =>
+        new ConsumerBuilder<string, string>(new ConsumerConfig
+        {
+            BootstrapServers = configuration["Kafka:BootstrapServers"]
+                ?? throw new InvalidOperationException("Kafka:BootstrapServers is required."),
+            GroupId = "spi-comparison",
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+            EnableAutoCommit = false
+        }).Build();
+}
+
+internal static partial class SpiComparisonConsumerLogMessages
+{
+    [LoggerMessage(Level = LogLevel.Debug,
+        Message = "Comparison complete. IdSystemA={IdSystemA} IdSystemB={IdSystemB} Discrepancies={Count} Source={Source}")]
+    public static partial void LogComparisonResult(this ILogger logger, string idSystemA, string idSystemB,
+        int count, string source);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Discrepancy detected and published. IdSystemA={IdSystemA} IdSystemB={IdSystemB} Fields={Count}")]
+    public static partial void LogDiscrepancyPublished(this ILogger logger, string idSystemA, string idSystemB,
+        int count);
+}

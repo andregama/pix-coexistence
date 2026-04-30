@@ -4,6 +4,8 @@ using ConvivenciaPix.Domain.Repositories;
 using ConvivenciaPix.Infrastructure.Cache;
 using ConvivenciaPix.Infrastructure.Jobs;
 using ConvivenciaPix.Infrastructure.Messaging;
+using ConvivenciaPix.Infrastructure.Orchestrator;
+using ConvivenciaPix.Infrastructure.Parsing;
 using ConvivenciaPix.Infrastructure.Persistence;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Signing;
@@ -29,6 +31,7 @@ public static class InfrastructureServiceExtensions
                 sql => sql.CommandTimeout(30)));
 
         services.AddScoped<ISpiSentMsgRepository, SpiSentMsgRepository>();
+        services.AddScoped<ISpiPendingSystemBMsgRepository, SpiPendingSystemBMsgRepository>();
 
         var redisConnection = configuration.GetConnectionString("Redis")
             ?? throw new InvalidOperationException("Redis connection string is required.");
@@ -38,13 +41,17 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<IResponseCache, RedisResponseCache>();
 
         services.AddSingleton<IXmlSigningService, XmlSigningService>();
+        services.AddSingleton<ISpiXmlParser, SpiXmlParser>();
+        services.AddSingleton<IOrchestratorClient, StubOrchestratorClient>();
 
         if (environment.IsDevelopment())
             services.AddSingleton<IHsmService, MockHsmService>();
         // Production: register real Dinamo HSM adapter here
 
         AddKafkaProducer(services, configuration);
-        services.AddScoped<IKafkaPublisher, KafkaPublisher>();
+        // Singleton — KafkaPublisher wraps the singleton IProducer<string,string>.
+        // Scoped lifetime was a bug: scope disposal would dispose the shared producer.
+        services.AddSingleton<IKafkaPublisher, KafkaPublisher>();
 
         AddCleanupJob(services);
 
