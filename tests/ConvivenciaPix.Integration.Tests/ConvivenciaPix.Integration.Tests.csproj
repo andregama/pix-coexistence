@@ -9,6 +9,8 @@
     <ProjectReference Include="..\..\src\Infrastructure\ConvivenciaPix.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Application\ConvivenciaPix.Application.csproj" />
     <ProjectReference Include="..\..\src\Domain\ConvivenciaPix.Domain.csproj" />
+    <ProjectReference Include="..\..\src\SpiProxyApi\ConvivenciaPix.SpiProxyApi.csproj" />
+    <ProjectReference Include="..\..\src\SpiCorrelateWorker\ConvivenciaPix.SpiCorrelateWorker.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,6 +24,7 @@
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" />
     <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
   </ItemGroup>
 
 </Project>

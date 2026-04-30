@@ -19,6 +19,7 @@
     <PackageReference Include="Testcontainers.MsSql" />
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
 </Project>

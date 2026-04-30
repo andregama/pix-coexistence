@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Metrics;
 using ConvivenciaPix.SpiCorrelateWorker.Consumers;
@@ -7,6 +8,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddHostedService<SystemBSentConsumer>();
 builder.Services.AddHostedService<SystemAResponseCorrelateConsumer>();

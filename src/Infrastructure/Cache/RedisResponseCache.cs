@@ -53,6 +53,56 @@ public sealed class RedisResponseCache : IResponseCache
         var value = await db.StringGetAsync($"{IdempotencyPrefix}{messageId}");
         return value.IsNullOrEmpty ? null : value.ToString();
     }
+
+    public async Task<string?> WaitForResponseAsync(string idSystemB, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        var db = _redis.GetDatabase();
+        var sub = _redis.GetSubscriber();
+        var channel = new RedisChannel($"channel:response:{idSystemB}", RedisChannel.PatternMode.Literal);
+
+        // Check if response is already there before subscribing (race condition mitigation)
+        var existing = await GetAsync(idSystemB, cancellationToken);
+        if (existing is not null) return existing;
+
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async void Handler(RedisChannel _, RedisValue value)
+        {
+            tcs.TrySetResult(value.ToString());
+        }
+
+        try
+        {
+            await sub.SubscribeAsync(channel, Handler);
+
+            // Double check after subscription to be absolutely sure we didn't miss it
+            existing = await GetAsync(idSystemB, cancellationToken);
+            if (existing is not null) return existing;
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(timeout, timeoutCts.Token));
+
+            if (completedTask == tcs.Task)
+            {
+                return await tcs.Task;
+            }
+
+            return null; // Timeout
+        }
+        finally
+        {
+            await sub.UnsubscribeAsync(channel, Handler);
+        }
+    }
+
+    public async Task SignalResponseAsync(string idSystemB, string response, CancellationToken cancellationToken = default)
+    {
+        var sub = _redis.GetSubscriber();
+        var channel = new RedisChannel($"channel:response:{idSystemB}", RedisChannel.PatternMode.Literal);
+        await sub.PublishAsync(channel, response);
+    }
 }
 
 internal static partial class RedisResponseCacheLogMessages

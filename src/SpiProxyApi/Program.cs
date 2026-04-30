@@ -1,7 +1,8 @@
+using ConvivenciaPix.Application;
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Metrics;
-using ConvivenciaPix.SpiProxyApi.Options;
 using Microsoft.AspNetCore.Authentication.Certificate;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
@@ -12,7 +13,8 @@ using OpenTelemetry.Trace;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.Configure<ProxyApiOptions>(builder.Configuration.GetSection("ProxyApi"));
+builder.Services.Configure<SpiProxyOptions>(builder.Configuration.GetSection("ProxyApi"));
+builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 
 // mTLS: require client certificate at the TLS layer in non-Development environments.
@@ -96,3 +98,5 @@ app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = _ => 
 app.MapPrometheusScrapingEndpoint("/metrics");
 
 app.Run();
+
+public partial class Program { }
