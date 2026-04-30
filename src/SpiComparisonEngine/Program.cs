@@ -1,10 +1,25 @@
 using ConvivenciaPix.Infrastructure;
+using ConvivenciaPix.Infrastructure.Metrics;
 using ConvivenciaPix.SpiComparisonEngine.Consumers;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddHostedService<SpiComparisonConsumer>();
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("spi-comparison-engine"))
+    .WithTracing(t => t
+        .AddSource("ConvivenciaPix")
+        .AddOtlpExporter(o =>
+            o.Endpoint = new Uri(builder.Configuration["Otel:Endpoint"] ?? "http://localhost:4317")))
+    .WithMetrics(m => m
+        .AddMeter(SpiMetrics.MeterName)
+        .AddOtlpExporter(o =>
+            o.Endpoint = new Uri(builder.Configuration["Otel:Endpoint"] ?? "http://localhost:4317")));
 
 var host = builder.Build();
 host.Run();

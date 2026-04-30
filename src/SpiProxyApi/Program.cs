@@ -1,9 +1,11 @@
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Infrastructure;
+using ConvivenciaPix.Infrastructure.Metrics;
 using ConvivenciaPix.SpiProxyApi.Options;
 using Microsoft.AspNetCore.Authentication.Certificate;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -74,9 +76,14 @@ builder.Services.AddHealthChecks()
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("spi-proxy-api"))
     .WithTracing(t => t
+        .AddSource("ConvivenciaPix")
         .AddAspNetCoreInstrumentation()
         .AddOtlpExporter(o =>
-            o.Endpoint = new Uri(builder.Configuration["Otel:Endpoint"] ?? "http://localhost:4317")));
+            o.Endpoint = new Uri(builder.Configuration["Otel:Endpoint"] ?? "http://localhost:4317")))
+    .WithMetrics(m => m
+        .AddMeter(SpiMetrics.MeterName)
+        .AddAspNetCoreInstrumentation()
+        .AddPrometheusExporter());
 
 var app = builder.Build();
 
@@ -86,5 +93,6 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/healthz");
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = _ => true });
+app.MapPrometheusScrapingEndpoint("/metrics");
 
 app.Run();

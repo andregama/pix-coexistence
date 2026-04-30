@@ -1,0 +1,33 @@
+groups:
+  - name: spi_alerts
+    rules:
+      - alert: SpiDlqMessagesHigh
+        expr: sum(rate(spi_dlq_messages_total[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SPI DLQ message rate is elevated"
+          description: "More than 1 message per second is being routed to DLQ topics"
+
+      - alert: SpiHeuristicFallbackHigh
+        expr: |
+          rate(spi_correlation_source_total{source="Heuristic"}[10m])
+          /
+          rate(spi_correlation_source_total[10m])
+          > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Heuristic correlation fallback rate exceeds 20%"
+          description: "More than 20% of correlations are using the heuristic strategy — orchestrator data may be stale"
+
+      - alert: SpiDiscrepanciesDetected
+        expr: sum(rate(spi_discrepancies_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "Business field discrepancies detected between System A and System B"
+          description: "Field: {{ $labels.field }}"

@@ -1,4 +1,5 @@
 using Confluent.Kafka;
+using ConvivenciaPix.Application.Interfaces;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -16,18 +17,21 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
     private readonly string _topic;
     private readonly string _dlqTopic;
     private readonly ILogger _logger;
+    private readonly ISpiMetrics _metrics;
 
     protected KafkaConsumerBase(
         IConsumer<TKey, TValue> consumer,
         IProducer<TKey, TValue> dlqProducer,
         string topic,
-        ILogger logger)
+        ILogger logger,
+        ISpiMetrics metrics)
     {
         _consumer = consumer;
         _dlqProducer = dlqProducer;
         _topic = topic;
         _dlqTopic = Topics.DlqFor(topic);
         _logger = logger;
+        _metrics = metrics;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -88,6 +92,7 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
             };
 
             await _dlqProducer.ProduceAsync(_dlqTopic, dlqMessage, cancellationToken);
+            _metrics.RecordDlqMessage(_dlqTopic);
 
             _logger.LogDlqRouted(
                 _topic,

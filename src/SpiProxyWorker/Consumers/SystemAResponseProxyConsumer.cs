@@ -4,9 +4,11 @@ using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Domain.Repositories;
 using ConvivenciaPix.Infrastructure.Messaging;
 using ConvivenciaPix.Infrastructure.Messaging.Debezium;
+using ConvivenciaPix.Infrastructure.Tracing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -30,6 +32,7 @@ public sealed class SystemAResponseProxyConsumer : KafkaConsumerBase<string, str
     private readonly IHsmService _hsmService;
     private readonly IXmlSigningService _xmlSigningService;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly ILogger<SystemAResponseProxyConsumer> _logger;
 
     public SystemAResponseProxyConsumer(
@@ -40,41 +43,56 @@ public sealed class SystemAResponseProxyConsumer : KafkaConsumerBase<string, str
         IHsmService hsmService,
         IXmlSigningService xmlSigningService,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         ILogger<SystemAResponseProxyConsumer> logger)
-        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemAResponses, logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemAResponses, logger, metrics)
     {
         _scopeFactory = scopeFactory;
         _responseCache = responseCache;
         _hsmService = hsmService;
         _xmlSigningService = xmlSigningService;
         _publisher = publisher;
+        _metrics = metrics;
         _logger = logger;
     }
 
     protected override async Task ProcessMessageAsync(
         ConsumeResult<string, string> result, CancellationToken cancellationToken)
     {
+        var sw = Stopwatch.StartNew();
         var responseDto = SystemAOutboxMapper.MapV1(result.Message.Value);
         var idSystemA = responseDto.IdSystemA;
 
+        // Propagate CorrelationId from Kafka header into OTel baggage
+        var correlationHeader = result.Message.Headers
+            .FirstOrDefault(h => h.Key == "correlation-id");
+        if (correlationHeader is not null)
+        {
+            Activity.Current?.SetBaggage("correlation-id",
+                Encoding.UTF8.GetString(correlationHeader.GetValueBytes()));
+        }
+
         // Retry loop to handle the race between correlate worker and proxy worker
         string? idSystemB = null;
-        for (var attempt = 1; attempt <= CorrelationRetries; attempt++)
+        using (SpiActivitySource.StartProxyActivity("proxy.correlate-lookup"))
         {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var repo = scope.ServiceProvider.GetRequiredService<ISpiSentMsgRepository>();
-            var sentMsg = await repo.FindByIdSystemAAsync(idSystemA, cancellationToken);
-
-            if (sentMsg is not null)
+            for (var attempt = 1; attempt <= CorrelationRetries; attempt++)
             {
-                idSystemB = sentMsg.IdSystemB;
-                break;
-            }
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var repo = scope.ServiceProvider.GetRequiredService<ISpiSentMsgRepository>();
+                var sentMsg = await repo.FindByIdSystemAAsync(idSystemA, cancellationToken);
 
-            if (attempt < CorrelationRetries)
-            {
-                _logger.LogCorrelationRetry(idSystemA, attempt, CorrelationRetries);
-                await Task.Delay(CorrelationRetryDelay, cancellationToken);
+                if (sentMsg is not null)
+                {
+                    idSystemB = sentMsg.IdSystemB;
+                    break;
+                }
+
+                if (attempt < CorrelationRetries)
+                {
+                    _logger.LogCorrelationRetry(idSystemA, attempt, CorrelationRetries);
+                    await Task.Delay(CorrelationRetryDelay, cancellationToken);
+                }
             }
         }
 
@@ -88,12 +106,21 @@ public sealed class SystemAResponseProxyConsumer : KafkaConsumerBase<string, str
             _logger.LogSystemBRequestMissing(idSystemB);
 
         // Sign System A's XML response
-        var cert = await _hsmService.GetSigningCertificateAsync(cancellationToken);
-        var signedXml = await _xmlSigningService.SignAsync(
-            XDocument.Parse(responseDto.SignedXml), cert);
+        string signedXml;
+        using (SpiActivitySource.StartProxyActivity("proxy.xml-sign"))
+        {
+            var cert = await _hsmService.GetSigningCertificateAsync(cancellationToken);
+            signedXml = await _xmlSigningService.SignAsync(
+                XDocument.Parse(responseDto.SignedXml), cert);
+        }
 
         // Deposit signed response in Redis — unblocks the API's polling loop
-        await _responseCache.SetAsync(idSystemB, signedXml, ResponseCacheTtl, cancellationToken);
+        using (SpiActivitySource.StartProxyActivity("proxy.redis-deposit"))
+        {
+            await _responseCache.SetAsync(idSystemB, signedXml, ResponseCacheTtl, cancellationToken);
+        }
+
+        _metrics.RecordProxyResponseLatency(sw.Elapsed.TotalMilliseconds);
         _logger.LogResponseDeposited(idSystemA, idSystemB);
 
         // Publish signed response to System B responses topic

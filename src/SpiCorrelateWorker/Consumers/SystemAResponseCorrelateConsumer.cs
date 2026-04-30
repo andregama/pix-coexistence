@@ -25,6 +25,7 @@ public sealed class SystemAResponseCorrelateConsumer : KafkaConsumerBase<string,
     private readonly IOrchestratorClient _orchestratorClient;
     private readonly ISpiXmlParser _xmlParser;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly int _heuristicWindowSeconds;
     private readonly ILogger<SystemAResponseCorrelateConsumer> _logger;
 
@@ -35,13 +36,15 @@ public sealed class SystemAResponseCorrelateConsumer : KafkaConsumerBase<string,
         IOrchestratorClient orchestratorClient,
         ISpiXmlParser xmlParser,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         ILogger<SystemAResponseCorrelateConsumer> logger)
-        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemAResponses, logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemAResponses, logger, metrics)
     {
         _scopeFactory = scopeFactory;
         _orchestratorClient = orchestratorClient;
         _xmlParser = xmlParser;
         _publisher = publisher;
+        _metrics = metrics;
         _heuristicWindowSeconds = configuration.GetValue("Correlate:HeuristicWindowSeconds", 60);
         _logger = logger;
     }
@@ -129,6 +132,7 @@ public sealed class SystemAResponseCorrelateConsumer : KafkaConsumerBase<string,
 
         await _publisher.PublishAsync(Topics.CorrelationEvents, correlationEvent, cancellationToken);
 
+        _metrics.RecordCorrelationSource(source.Value);
         _logger.LogCorrelated(idSystemA, idSystemB, source.Value);
     }
 

@@ -1,9 +1,12 @@
 using Confluent.Kafka;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Events;
+using ConvivenciaPix.Domain.Repositories;
 using ConvivenciaPix.Infrastructure.Messaging;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.Json;
@@ -17,20 +20,26 @@ namespace ConvivenciaPix.SpiComparisonEngine.Consumers;
 /// </summary>
 public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
 {
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ISpiXmlParser _xmlParser;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly ILogger<SpiComparisonConsumer> _logger;
 
     public SpiComparisonConsumer(
         IConfiguration configuration,
         IProducer<string, string> dlqProducer,
+        IServiceScopeFactory scopeFactory,
         ISpiXmlParser xmlParser,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         ILogger<SpiComparisonConsumer> logger)
-        : base(BuildConsumer(configuration), dlqProducer, Topics.ComparisonEvents, logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.ComparisonEvents, logger, metrics)
     {
+        _scopeFactory = scopeFactory;
         _xmlParser = xmlParser;
         _publisher = publisher;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -51,7 +60,10 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
             discrepancies.Count, comparisonEvent.CorrelationSource);
 
         if (discrepancies.Count > 0)
+        {
+            await PersistDiscrepanciesAsync(comparisonEvent, discrepancies, cancellationToken);
             await PublishDiscrepancyAsync(comparisonEvent, discrepancies, cancellationToken);
+        }
     }
 
     private List<DiscrepancyRecord> CompareFields(SpiComparisonEventDto ev)
@@ -85,6 +97,24 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
     {
         try { return extract(); }
         catch { return null; }
+    }
+
+    private async Task PersistDiscrepanciesAsync(
+        SpiComparisonEventDto ev,
+        List<DiscrepancyRecord> discrepancies,
+        CancellationToken cancellationToken)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var repo = scope.ServiceProvider.GetRequiredService<ISpiDiscrepancyRepository>();
+
+        var entities = discrepancies.Select(d => SpiDiscrepancy.Create(
+            ev.IdSystemA, ev.IdSystemB, ev.CorrelationSource,
+            d.FieldName, d.ValueA, d.ValueB)).ToList();
+
+        await repo.AddRangeAsync(entities, cancellationToken);
+
+        foreach (var d in discrepancies)
+            _metrics.RecordDiscrepancy(d.FieldName);
     }
 
     private async Task PublishDiscrepancyAsync(

@@ -9,6 +9,7 @@ public sealed class CoexistenceDbContext : DbContext
 
     public DbSet<SpiSentMsg> SpiSentMsgs => Set<SpiSentMsg>();
     public DbSet<SpiPendingSystemBMsg> SpiPendingSystemBMsgs => Set<SpiPendingSystemBMsg>();
+    public DbSet<SpiDiscrepancy> SpiDiscrepancies => Set<SpiDiscrepancy>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

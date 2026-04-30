@@ -6,11 +6,13 @@ using ConvivenciaPix.Infrastructure.Certificates;
 using ConvivenciaPix.Infrastructure.Hsm;
 using ConvivenciaPix.Infrastructure.Jobs;
 using ConvivenciaPix.Infrastructure.Messaging;
+using ConvivenciaPix.Infrastructure.Metrics;
 using ConvivenciaPix.Infrastructure.Orchestrator;
 using ConvivenciaPix.Infrastructure.Parsing;
 using ConvivenciaPix.Infrastructure.Persistence;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Signing;
+using ConvivenciaPix.Infrastructure.Tracing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,6 +36,11 @@ public static class InfrastructureServiceExtensions
 
         services.AddScoped<ISpiSentMsgRepository, SpiSentMsgRepository>();
         services.AddScoped<ISpiPendingSystemBMsgRepository, SpiPendingSystemBMsgRepository>();
+        services.AddScoped<ISpiDiscrepancyRepository, SpiDiscrepancyRepository>();
+
+        var spiMetrics = new SpiMetrics();
+        services.AddSingleton<ISpiMetrics>(spiMetrics);
+        services.AddSingleton(spiMetrics);
 
         var redisConnection = configuration.GetConnectionString("Redis")
             ?? throw new InvalidOperationException("Redis connection string is required.");

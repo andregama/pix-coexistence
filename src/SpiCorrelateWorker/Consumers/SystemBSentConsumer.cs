@@ -27,8 +27,9 @@ public sealed class SystemBSentConsumer : KafkaConsumerBase<string, string>
         IProducer<string, string> dlqProducer,
         IServiceScopeFactory scopeFactory,
         ISpiXmlParser xmlParser,
+        ISpiMetrics metrics,
         ILogger<SystemBSentConsumer> logger)
-        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemBRequests, logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemBRequests, logger, metrics)
     {
         _scopeFactory = scopeFactory;
         _xmlParser = xmlParser;

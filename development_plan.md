@@ -182,36 +182,43 @@ Consumer group `spi-comparison`, topic `spi.comparison.events`:
 
 ---
 
-## Phase 4 — Observability & Comparison Dashboard (Planned)
+## Phase 4 — Observability & Comparison Dashboard ✅ Complete
 
 **Goal:** Make the coexistence layer fully observable for the architectural review period — discrepancies must be surfaced immediately and the heuristic fallback rate must be measurable.
 
-### Planned Deliverables
+### Deliverables
 
 #### Discrepancy Storage
-- Add `SpiDiscrepancy` table to `DB_COEXISTENCE` mirroring `SpiDiscrepancyDetected` event fields
-- `SpiComparisonConsumer` writes discrepancies to DB in addition to publishing to Kafka
-- Allows SQL-based dashboards without replaying the Kafka topic
+- `SpiDiscrepancy` entity (`src/Domain/Entities/SpiDiscrepancy.cs`) — fields: `Id`, `IdSystemA`, `IdSystemB`, `CorrelationSource`, `Field`, `SystemAValue`, `SystemBValue`, `DetectedAt`
+- `ISpiDiscrepancyRepository` + `SpiDiscrepancyRepository` — `AddRangeAsync` batches rows in one `SaveChangesAsync`
+- `SpiDiscrepancyConfiguration` — table `SpiDiscrepancies`, index on `(IdSystemA, DetectedAt)`
+- EF migration `AddDiscrepancyTable` — creates table + index
+- `SpiComparisonConsumer` updated to persist one row per mismatched field before publishing to Kafka
 
-#### Metrics
-- OpenTelemetry metrics via `System.Diagnostics.Metrics`:
-  - `spi.correlation.source` (counter with `source=Orchestrator|Heuristic`) — tracks fallback rate (RF-05)
-  - `spi.proxy.response_latency` (histogram) — API polling wait time
-  - `spi.discrepancies.total` (counter with `field=Amount|PayerId|PayeeId`) — comparison engine output
-- Export to Prometheus via `OpenTelemetry.Exporter.Prometheus.AspNetCore`
-- Grafana dashboard definition (`infra/grafana/`) with panels for all three metrics
+#### Metrics (RF-05, RF-08)
+- `ISpiMetrics` interface + `SpiMetrics` implementation using `System.Diagnostics.Metrics.Meter("ConvivenciaPix")`
+- Instruments:
+  - `spi.correlation.source` counter — tags: `source` (Orchestrator/Heuristic)
+  - `spi.proxy.response_latency_ms` histogram
+  - `spi.discrepancies.total` counter — tags: `field`
+  - `spi.dlq.messages` counter — tags: `topic` (incremented in `KafkaConsumerBase` on DLQ routing)
+- `SpiProxyApi`: Prometheus scraping endpoint on `/metrics` via `OpenTelemetry.Exporter.Prometheus.AspNetCore 1.10.0-beta.1`
+- Workers: OTLP push via `OpenTelemetry.Exporter.OpenTelemetryProtocol`
 
 #### Tracing Enrichment
-- Propagate `CorrelationId` (= `IdSystemB`) as an OpenTelemetry baggage item across all Kafka messages
-- Add `Activity` spans to `SystemAResponseProxyConsumer` retry loop, signing, and Redis deposit steps
-- Correlate API request traces with worker processing spans in Jaeger
+- `SpiActivitySource` static class — `ActivitySource("ConvivenciaPix", "1.0.0")`
+- `SystemAResponseProxyConsumer` — named spans: `proxy.correlate-lookup`, `proxy.xml-sign`, `proxy.redis-deposit`
+- CorrelationId Kafka header propagated into `Activity.Current.SetBaggage("correlation-id", ...)`
+- All entry points register `AddSource("ConvivenciaPix")` with OTel tracing builder
 
 #### Alerting
-- Define alert rules for:
-  - DLQ message count > 0 (any topic)
-  - Heuristic fallback rate > 20% over a 5-minute window
-  - API timeout rate > 5% over a 1-minute window
-  - Redis eviction count > 0 (noeviction policy should prevent this, but alert if it occurs)
+- `infra/prometheus/alert_rules.yml` — three rules: `SpiDlqMessagesHigh`, `SpiHeuristicFallbackHigh`, `SpiDiscrepanciesDetected`
+
+#### Local Infrastructure
+- `infra/prometheus/prometheus.yml` — scrapes `spi-proxy-api:9090/metrics` at 15s interval
+- `infra/grafana/provisioning/` — Prometheus datasource + dashboard provider
+- `infra/grafana/dashboards/spi-overview.json` — 5 panels: Correlation Source (pie), Response Latency p50/p95/p99 (timeseries), Discrepancies by Field (bar), DLQ Rate (stat), Heuristic % (gauge with 20% threshold)
+- `docker-compose.yml` — added Prometheus (port 9090) and Grafana (port 3000) services
 
 ---
 

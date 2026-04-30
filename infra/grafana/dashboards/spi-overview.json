@@ -1,0 +1,97 @@
+{
+  "title": "SPI Overview",
+  "uid": "spi-overview",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Correlation Source",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (source) (spi_correlation_source_total)",
+          "legendFormat": "{{ source }}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Proxy Response Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 16, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(spi_proxy_response_latency_ms_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(spi_proxy_response_latency_ms_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(spi_proxy_response_latency_ms_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Discrepancies by Field",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (field) (increase(spi_discrepancies_total[1h]))",
+          "legendFormat": "{{ field }}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "DLQ Message Rate",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(rate(spi_dlq_messages_total[5m]))",
+          "legendFormat": "msg/s"
+        }
+      ],
+      "options": {
+        "thresholds": {
+          "steps": [
+            { "value": 0, "color": "green" },
+            { "value": 0.1, "color": "yellow" },
+            { "value": 1, "color": "red" }
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Heuristic Correlation %",
+      "type": "gauge",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "100 * rate(spi_correlation_source_total{source=\"Heuristic\"}[10m]) / rate(spi_correlation_source_total[10m])",
+          "legendFormat": "Heuristic %"
+        }
+      ],
+      "options": {
+        "thresholds": {
+          "steps": [
+            { "value": 0, "color": "green" },
+            { "value": 10, "color": "yellow" },
+            { "value": 20, "color": "red" }
+          ]
+        },
+        "maxValue": 100
+      }
+    }
+  ]
+}
