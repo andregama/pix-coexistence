@@ -2,6 +2,8 @@ using Confluent.Kafka;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Domain.Repositories;
 using ConvivenciaPix.Infrastructure.Cache;
+using ConvivenciaPix.Infrastructure.Certificates;
+using ConvivenciaPix.Infrastructure.Hsm;
 using ConvivenciaPix.Infrastructure.Jobs;
 using ConvivenciaPix.Infrastructure.Messaging;
 using ConvivenciaPix.Infrastructure.Orchestrator;
@@ -42,20 +44,77 @@ public static class InfrastructureServiceExtensions
 
         services.AddSingleton<IXmlSigningService, XmlSigningService>();
         services.AddSingleton<ISpiXmlParser, SpiXmlParser>();
-        services.AddSingleton<IOrchestratorClient, StubOrchestratorClient>();
 
-        if (environment.IsDevelopment())
-            services.AddSingleton<IHsmService, MockHsmService>();
-        // Production: register real Dinamo HSM adapter here
-
+        AddHsmServices(services, configuration, environment);
+        AddCertificateValidator(services, configuration, environment);
+        AddOrchestratorClient(services, configuration, environment);
         AddKafkaProducer(services, configuration);
+
         // Singleton — KafkaPublisher wraps the singleton IProducer<string,string>.
-        // Scoped lifetime was a bug: scope disposal would dispose the shared producer.
         services.AddSingleton<IKafkaPublisher, KafkaPublisher>();
 
         AddCleanupJob(services);
 
         return services;
+    }
+
+    private static void AddHsmServices(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        services.Configure<DinamoOptions>(configuration.GetSection("Dinamo"));
+
+        if (environment.IsDevelopment())
+        {
+            services.AddSingleton<IHsmService, MockHsmService>();
+        }
+        else
+        {
+            // LocalDinamoSdkClient uses .NET BCL — no DinamoAPI.dll needed.
+            // For Production with a real HSM: register DinamoNetSdkClient here instead,
+            // after adding DinamoAPI.dll as a local assembly reference.
+            services.AddSingleton<IDinamoSdkClient, LocalDinamoSdkClient>();
+            services.AddSingleton<IHsmService, DinamoHsmService>();
+        }
+    }
+
+    private static void AddCertificateValidator(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        services.Configure<CertificateValidatorOptions>(
+            configuration.GetSection("CertificateValidator"));
+
+        if (environment.IsDevelopment())
+            services.AddSingleton<ICertificateValidator, DevCertificateValidator>();
+        else
+            services.AddSingleton<ICertificateValidator, BacenCertificateValidator>();
+    }
+
+    private static void AddOrchestratorClient(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        services.Configure<OrchestratorOptions>(configuration.GetSection("Orchestrator"));
+
+        if (environment.IsDevelopment())
+        {
+            services.AddSingleton<IOrchestratorClient, StubOrchestratorClient>();
+        }
+        else
+        {
+            services.AddHttpClient<IOrchestratorClient, HttpOrchestratorClient>((provider, client) =>
+            {
+                var options = configuration.GetSection("Orchestrator").Get<OrchestratorOptions>()
+                    ?? new OrchestratorOptions();
+
+                if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+                    client.BaseAddress = new Uri(options.BaseUrl);
+
+                if (!string.IsNullOrWhiteSpace(options.ApiKey))
+                    client.DefaultRequestHeaders.Add("X-Api-Key", options.ApiKey);
+
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+            })
+            .AddStandardResilienceHandler();
+        }
     }
 
     private static void AddKafkaProducer(IServiceCollection services, IConfiguration configuration)

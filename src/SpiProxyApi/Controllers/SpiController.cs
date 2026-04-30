@@ -2,6 +2,7 @@ using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Infrastructure.Messaging;
 using ConvivenciaPix.SpiProxyApi.Options;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Text;
@@ -11,6 +12,7 @@ namespace ConvivenciaPix.SpiProxyApi.Controllers;
 
 [ApiController]
 [Route("api/spi")]
+[Authorize]
 public sealed class SpiController : ControllerBase
 {
     private readonly IResponseCache _cache;

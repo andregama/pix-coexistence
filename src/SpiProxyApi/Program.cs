@@ -1,6 +1,9 @@
+using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.SpiProxyApi.Options;
+using Microsoft.AspNetCore.Authentication.Certificate;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -9,6 +12,54 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.Configure<ProxyApiOptions>(builder.Configuration.GetSection("ProxyApi"));
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
+
+// mTLS: require client certificate at the TLS layer in non-Development environments.
+// In Production, Kestrel:Endpoints:Https:ClientCertificateMode = RequireCertificate
+// is set via appsettings.Production.json / environment variables.
+if (!builder.Environment.IsDevelopment())
+{
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        kestrel.ConfigureHttpsDefaults(https =>
+        {
+            https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+        });
+    });
+}
+
+// Certificate authentication middleware validates the client cert via ICertificateValidator.
+// In Development, DevCertificateValidator always returns true (no cert required).
+// In Production, BacenCertificateValidator enforces thumbprint + expiry + chain errors.
+builder.Services
+    .AddAuthentication(CertificateAuthenticationDefaults.AuthenticationScheme)
+    .AddCertificate(options =>
+    {
+        options.AllowedCertificateTypes = CertificateTypes.All;
+        options.Events = new CertificateAuthenticationEvents
+        {
+            OnCertificateValidated = context =>
+            {
+                var validator = context.HttpContext.RequestServices
+                    .GetRequiredService<ICertificateValidator>();
+
+                if (validator.IsValid(
+                    context.ClientCertificate,
+                    chain: null,
+                    System.Net.Security.SslPolicyErrors.None))
+                {
+                    context.Success();
+                }
+                else
+                {
+                    context.Fail("Client certificate validation failed.");
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 builder.Services.AddHealthChecks()
     .AddSqlServer(
@@ -29,8 +80,9 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
-// mTLS enforcement: configure Kestrel client certificate in production (Phase 3)
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/healthz");
 app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = _ => true });

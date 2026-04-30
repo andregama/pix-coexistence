@@ -146,34 +146,39 @@ Consumer group `spi-comparison`, topic `spi.comparison.events`:
 
 ---
 
-## Phase 3 — Security Hardening (Planned)
+## Phase 3 — Security Hardening ✅ Complete
 
 **Goal:** Harden the solution for production deployment with mutual TLS, real HSM integration, and the orchestrator HTTP client.
 
-### Planned Deliverables
+### Deliverables
 
 #### mTLS for SpiProxyApi (RF-01)
-- Configure Kestrel to require client certificates on HTTPS
-- Validate client certificate against a trusted CA (Bacen's certificate chain)
-- Add `ICertificateValidator` interface and production implementation
-- Add `ClientCertificateMode.RequireCertificate` to Kestrel options in `appsettings.Production.json`
+- `ICertificateValidator` interface in Application layer
+- `BacenCertificateValidator` (production) — rejects on TLS policy errors, expired cert, or untrusted thumbprint. Trusted thumbprints configured via `CertificateValidator:TrustedThumbprints[]`.
+- `DevCertificateValidator` (development) — always passes, logs a `Warning` on every call
+- Kestrel `ClientCertificateMode.RequireCertificate` enabled in non-Development via `WebHost.ConfigureKestrel`
+- ASP.NET Core certificate authentication middleware (`Microsoft.AspNetCore.Authentication.Certificate`) validates cert via `ICertificateValidator` in `OnCertificateValidated`
+- `[Authorize]` on `SpiController` — unauthenticated requests return `401`
+- `appsettings.Production.json` configures Kestrel HTTPS endpoint with `RequireCertificate`
 
-#### Real Dinamo HSM Adapter
-- Implement `IHsmService` backed by the Dinamo HSM SDK
-- Certificate loaded from HSM slot — no private key material in application memory
-- Guarded to require `IHostEnvironment.IsProduction()` or explicit opt-in
+#### Dinamo HSM Two-Layer Abstraction
+- `IDinamoSdkClient` interface mirrors the DinamoAPI.NET (DNET) contract exactly: `Connect`, `GetCertificate`, `Sign`, `Disconnect`
+- `LocalDinamoSdkClient` — .NET BCL implementation (no DinamoAPI.dll). `Host` is treated as a PFX file path. Used in Development and Staging.
+- `DinamoHsmService` — production `IHsmService` backed by `IDinamoSdkClient`. Connects/disconnects per operation (thread safe). Caches the signing certificate after first load.
+- In production: ops team adds `DinamoAPI.dll` and registers `DinamoNetSdkClient` (not in this repo) implementing `IDinamoSdkClient`. No changes to `DinamoHsmService` required.
+- `DinamoOptions` bound from `Dinamo` config section: `Host`, `Port` (4433), `UserId`, `Password`, `CertificateLabel`, `KeyLabel`, `SignMechanism` (`RSA_PKCS1_V1_5`)
 
-#### Real Orchestrator HTTP Client
-- Implement `IOrchestratorClient` as an `HttpClient`-backed service
-- Calls the orchestrator's REST API to resolve `IdSystemA → IdSystemB` via transaction database
-- Configurable base URL and timeout in `appsettings.json`
-- Resilience policies (retry + circuit breaker) via `Microsoft.Extensions.Http.Resilience`
-- Replace `StubOrchestratorClient` registration in `InfrastructureServiceExtensions` for non-Development environments
+#### Orchestrator HTTP Client with Resilience
+- `HttpOrchestratorClient` — typed `HttpClient` implementing `IOrchestratorClient`
+- `GET /api/correlations/{idSystemA}` → 200 returns `OrchestratorResult`; 404 returns `null` (triggers heuristic); other status throws
+- `X-Api-Key` header injected at registration time
+- `AddStandardResilienceHandler()` via `Microsoft.Extensions.Http.Resilience` — exponential retry (3×), circuit breaker, per-attempt and total timeouts
+- Registered only in non-Development; `StubOrchestratorClient` remains the Development default
 
-#### Secrets Management
-- Remove hardcoded SA password and connection strings from `appsettings.json`
-- Integrate Azure Key Vault or environment-variable injection for all secrets
-- Update Debezium connector to use a proper secrets file (not `Dev@Strong123`)
+#### Secrets via Environment Variables
+- All sensitive values in `appsettings.Production.json` set to `""` — env vars take precedence at runtime
+- `.env.example` documents every required production env var with naming convention (`ConnectionStrings__SqlServer`, `Dinamo__Password`, `Orchestrator__ApiKey`, etc.)
+- `appsettings.json` (dev values) unchanged — only loaded in Development
 
 ---
 
