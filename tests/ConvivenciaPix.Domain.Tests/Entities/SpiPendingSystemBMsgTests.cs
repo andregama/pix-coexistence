@@ -1,4 +1,5 @@
 using ConvivenciaPix.Domain.Entities;
+using Xunit;
 using FluentAssertions;
 
 namespace ConvivenciaPix.Domain.Tests.Entities;

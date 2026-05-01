@@ -1,7 +1,7 @@
 using ConvivenciaPix.Application.DTOs;
 using System.Text.Json;
 
-namespace ConvivenciaPix.Infrastructure.Messaging.Debezium;
+namespace ConvivenciaPix.Application.Mappers;
 
 /// <summary>
 /// Translates raw Debezium CDC JSON into application DTOs.

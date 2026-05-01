@@ -2,6 +2,7 @@ using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Persistence;
 

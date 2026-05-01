@@ -1,6 +1,7 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
+using Xunit;
 using FluentAssertions;
 using FluentValidation;
 using FluentValidation.Results;

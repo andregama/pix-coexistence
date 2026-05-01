@@ -1,5 +1,6 @@
 using ConvivenciaPix.Infrastructure.Parsing;
 using FluentAssertions;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Parsing;
 

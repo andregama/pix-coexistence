@@ -72,18 +72,15 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 
 ---
 
-## Phase 6 — Comprehensive Testing 🏗️ In Progress
+## Phase 6 — Comprehensive Testing ✅ Complete (Unit) / 🏗️ Pending (Integration)
 
 **Goal:** Achieve 90%+ coverage across all layers and validate the full E2E pipeline.
 
 ### Deliverables
 - **Domain Unit Tests:** Complete coverage for all entities and value objects. ✅
-- **Application Unit Tests:** Test Use Cases in isolation using Mocks (Moq/NSubstitute).
-- **Infrastructure Integration Tests:** Validate Repository and Cache behavior using **Testcontainers** (SQL Server & Redis).
-- **End-to-End Integration Tests:** Full pipeline validation using Testcontainers (Kafka + SQL + Redis):
-  - Request -> Correlation -> Signing -> Response delivery.
-  - Idempotency edge cases.
-  - Discrepancy detection accuracy.
+- **Application Unit Tests:** Test Use Cases in isolation using Mocks (Moq/NSubstitute). ✅
+- **Infrastructure Integration Tests:** Validate Repository and Cache behavior using **Testcontainers**. (Implemented, requires Docker) 🏗️
+- **End-to-End Integration Tests:** Full pipeline validation using Testcontainers (Kafka + SQL + Redis). (Implemented, requires Docker) 🏗️
 
 ---
 

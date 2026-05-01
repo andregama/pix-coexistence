@@ -1,5 +1,6 @@
 using StackExchange.Redis;
 using Testcontainers.Redis;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Fixtures;
 

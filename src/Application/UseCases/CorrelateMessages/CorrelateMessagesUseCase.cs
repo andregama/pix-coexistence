@@ -1,9 +1,9 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Application.Mappers;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Repositories;
 using ConvivenciaPix.Domain.ValueObjects;
-using ConvivenciaPix.Infrastructure.Messaging.Debezium;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

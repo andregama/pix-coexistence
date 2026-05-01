@@ -12,7 +12,6 @@ using ConvivenciaPix.Infrastructure.Parsing;
 using ConvivenciaPix.Infrastructure.Persistence;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Signing;
-using ConvivenciaPix.Infrastructure.Tracing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

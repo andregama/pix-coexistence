@@ -1,6 +1,7 @@
 using ConvivenciaPix.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.MsSql;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Fixtures;
 

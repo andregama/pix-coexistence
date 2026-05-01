@@ -4,6 +4,7 @@ using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Persistence;
 

@@ -1,4 +1,5 @@
 using ConvivenciaPix.Domain.ValueObjects;
+using Xunit;
 using FluentAssertions;
 
 namespace ConvivenciaPix.Domain.Tests.ValueObjects;

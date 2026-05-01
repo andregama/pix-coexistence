@@ -1,5 +1,6 @@
 using ConvivenciaPix.Infrastructure.Signing;
 using FluentAssertions;
+using Xunit;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Xml.Linq;

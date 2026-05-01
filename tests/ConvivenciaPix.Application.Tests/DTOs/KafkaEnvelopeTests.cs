@@ -1,4 +1,5 @@
 using ConvivenciaPix.Application.DTOs;
+using Xunit;
 using FluentAssertions;
 using System.Text;
 using System.Text.Json;

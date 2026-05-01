@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace ConvivenciaPix.Infrastructure.Tracing;
+namespace ConvivenciaPix.Application.Tracing;
 
 public static class SpiActivitySource
 {

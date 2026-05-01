@@ -1,8 +1,8 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Application.Mappers;
+using ConvivenciaPix.Application.Tracing;
 using ConvivenciaPix.Domain.Repositories;
-using ConvivenciaPix.Infrastructure.Messaging.Debezium;
-using ConvivenciaPix.Infrastructure.Tracing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;

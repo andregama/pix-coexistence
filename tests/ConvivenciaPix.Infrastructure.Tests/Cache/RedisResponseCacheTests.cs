@@ -2,6 +2,7 @@ using ConvivenciaPix.Infrastructure.Cache;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Cache;
 

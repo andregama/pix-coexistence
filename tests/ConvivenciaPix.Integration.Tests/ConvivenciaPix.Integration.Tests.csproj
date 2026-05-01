@@ -11,6 +11,7 @@
     <ProjectReference Include="..\..\src\Domain\ConvivenciaPix.Domain.csproj" />
     <ProjectReference Include="..\..\src\SpiProxyApi\ConvivenciaPix.SpiProxyApi.csproj" />
     <ProjectReference Include="..\..\src\SpiCorrelateWorker\ConvivenciaPix.SpiCorrelateWorker.csproj" />
+    <ProjectReference Include="..\..\src\SpiProxyWorker\ConvivenciaPix.SpiProxyWorker.csproj" />
   </ItemGroup>
 
   <ItemGroup>
