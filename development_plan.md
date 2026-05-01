@@ -84,19 +84,20 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 
 ---
 
-## Phase 7 — Production Readiness & DX 📋 Planned
+## Phase 7 — Production Readiness & DX ✅ Complete
 
 **Goal:** Final polish for production deployment and developer productivity.
 
 ### Deliverables
-- **Resilience:** Implement **Rate Limiting** in `SpiProxyApi` using fixed-window or token-bucket strategies.
-- **Security:** Add CRL/OCSP support to `BacenCertificateValidator`.
-- **Developer Automation (Makefile):**
-  - `make infra`: Start local stack.
+- **Resilience:** Implemented **Rate Limiting** in `SpiProxyApi` using a global Fixed Window strategy (100 req/10s). ✅
+- **Security:** Added **CRL/OCSP** online revocation support to `BacenCertificateValidator`. ✅
+- **Developer Automation (Makefile):** ✅
+  - `make infra-up`: Start local stack.
+  - `make infra-down`: Stop containers.
   - `make migrate`: Apply EF migrations.
   - `make test`: Run full test suite.
-  - `make lint`: Run `dotnet format` and static analysis.
-- **Documentation:** Complete Swagger/OpenAPI documentation for ISO 20022 payloads.
+  - `make lint`: Run `dotnet format`.
+- **Documentation:** Integrated **Swagger / OpenAPI** for ISO 20022 payloads with full XML comment support. ✅
 
 ---
 

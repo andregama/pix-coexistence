@@ -31,6 +31,21 @@ public sealed class BacenCertificateValidator : ICertificateValidator
         var subject = certificate.Subject;
         var expiry = certificate.NotAfter;
 
+        if (_options.CheckRevocation)
+        {
+            using var revocationChain = new X509Chain();
+            revocationChain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+            revocationChain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
+            revocationChain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+
+            if (!revocationChain.Build(certificate))
+            {
+                var errors = string.Join(", ", revocationChain.ChainStatus.Select(s => s.StatusInformation));
+                _logger.LogCertRejectedRevoked(thumbprint, subject, errors);
+                return false;
+            }
+        }
+
         if (_options.ValidateChain && sslPolicyErrors != SslPolicyErrors.None)
         {
             _logger.LogCertRejectedPolicyErrors(thumbprint, subject, sslPolicyErrors);
@@ -67,6 +82,10 @@ internal static partial class BacenCertificateValidatorLogMessages
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Client certificate rejected — TLS policy errors. Thumbprint={Thumbprint} Subject={Subject} Errors={SslPolicyErrors}")]
     public static partial void LogCertRejectedPolicyErrors(this ILogger logger, string thumbprint, string subject, SslPolicyErrors sslPolicyErrors);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Client certificate rejected — revoked or chain build failed. Thumbprint={Thumbprint} Subject={Subject} Errors={Errors}")]
+    public static partial void LogCertRejectedRevoked(this ILogger logger, string thumbprint, string subject, string errors);
 
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Client certificate rejected — expired. Thumbprint={Thumbprint} Subject={Subject} Expiry={Expiry:O}")]

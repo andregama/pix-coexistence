@@ -22,8 +22,19 @@ public sealed class SpiController : ControllerBase
     /// Simulates the Bacen SPI endpoint for System B. Accepts a raw SPI XML message,
     /// delegates processing to the use case, and returns the signed response or an error.
     /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The SPI response XML message.</returns>
+    /// <response code="200">Returns the signed SPI response XML.</response>
+    /// <response code="400">If the input XML is invalid.</response>
+    /// <response code="429">Too many requests.</response>
+    /// <response code="504">If the request times out waiting for System A.</response>
     [HttpPost("messages")]
     [Consumes("application/xml", "text/xml")]
+    [Produces("application/xml")]
+    [ProducesResponseType(typeof(string), 200)]
+    [ProducesResponseType(typeof(string), 400)]
+    [ProducesResponseType(typeof(void), 429)]
+    [ProducesResponseType(typeof(string), 504)]
     public async Task<IActionResult> PostMessage(CancellationToken cancellationToken)
     {
         string rawXml;

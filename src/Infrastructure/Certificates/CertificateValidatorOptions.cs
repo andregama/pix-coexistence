@@ -14,4 +14,9 @@ public sealed class CertificateValidatorOptions
     /// Should always be true in production.
     /// </summary>
     public bool ValidateChain { get; set; } = true;
+
+    /// <summary>
+    /// When true, performs online revocation checking (CRL/OCSP).
+    /// </summary>
+    public bool CheckRevocation { get; set; } = false;
 }
