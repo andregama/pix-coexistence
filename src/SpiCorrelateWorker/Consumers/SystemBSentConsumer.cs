@@ -2,6 +2,7 @@ using Confluent.Kafka;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.CorrelateMessages;
+using Microsoft.Extensions.DependencyInjection;
 using ConvivenciaPix.Infrastructure.Messaging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -11,17 +12,17 @@ namespace ConvivenciaPix.SpiCorrelateWorker.Consumers;
 
 public sealed class SystemBSentConsumer : KafkaConsumerBase<string, string>
 {
-    private readonly IReceiveSystemBSentUseCase _useCase;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public SystemBSentConsumer(
         IConfiguration configuration,
         IProducer<string, string> dlqProducer,
-        IReceiveSystemBSentUseCase useCase,
+        IServiceScopeFactory scopeFactory,
         ISpiMetrics metrics,
         ILogger<SystemBSentConsumer> logger)
         : base(BuildConsumer(configuration), dlqProducer, Topics.SystemBRequests, logger, metrics)
     {
-        _useCase = useCase;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ProcessMessageAsync(
@@ -30,7 +31,9 @@ public sealed class SystemBSentConsumer : KafkaConsumerBase<string, string>
         var envelope = JsonSerializer.Deserialize<KafkaEnvelope>(result.Message.Value)
             ?? throw new InvalidOperationException("Failed to deserialize KafkaEnvelope from SystemBRequests");
 
-        await _useCase.ExecuteAsync(envelope, cancellationToken);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var useCase = scope.ServiceProvider.GetRequiredService<IReceiveSystemBSentUseCase>();
+        await useCase.ExecuteAsync(envelope, cancellationToken);
     }
 
     private static IConsumer<string, string> BuildConsumer(IConfiguration configuration) =>
