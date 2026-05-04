@@ -24,10 +24,11 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     healthcheck:
-      test: echo stat | nc localhost 2181 | grep Mode
+      test: nc -z localhost 2181
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 15s
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
@@ -150,6 +151,7 @@ services:
 
   debezium-ui:
     image: debezium/debezium-ui:latest
+    platform: linux/x86_64
     container_name: convivencia-debezium-ui
     depends_on:
       debezium:
