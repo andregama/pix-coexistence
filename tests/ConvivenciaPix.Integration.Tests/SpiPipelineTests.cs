@@ -31,7 +31,11 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
             <Document>
                 <FIToFIPmtStsRpt>
                     <GrpHdr><MsgId>{messageId}</MsgId></GrpHdr>
-                    <TxInfAndSts><EndToEndId>{idSystemB}</EndToEndId></TxInfAndSts>
+                    <TxInfAndSts>
+                        <EndToEndId>{idSystemB}</EndToEndId>
+                        <Dbtr><Nm>PAYER-{idSystemB}</Nm></Dbtr>
+                        <Cdtr><Nm>PAYEE-{idSystemB}</Nm></Cdtr>
+                    </TxInfAndSts>
                 </FIToFIPmtStsRpt>
             </Document>
             """;
@@ -51,8 +55,7 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
         {
             IdSystemA = idSystemA,
             MessageId = "MSG-A-" + idSystemB,
-            SignedXml = $"""<Document><MsgId>BACEN-{idSystemB}</MsgId></Document>""",
-            IsError = false
+            Payload = $"""<Document><MsgId>BACEN-{idSystemB}</MsgId><Dbtr><Nm>PAYER-{idSystemB}</Nm></Dbtr><Cdtr><Nm>PAYEE-{idSystemB}</Nm></Cdtr></Document>"""
         };
         
         await PublishToKafka("spi.systema.responses", idSystemA, JsonSerializer.Serialize(cdcEvent));
@@ -71,7 +74,7 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
     {
         // 1. Arrange
         var idSystemB = Guid.NewGuid().ToString("N")[..16];
-        var requestXml = $"""<Document><TxInfAndSts><EndToEndId>{idSystemB}</EndToEndId></TxInfAndSts></Document>""";
+        var requestXml = $"""<Document><GrpHdr><MsgId>MSG-{idSystemB}</MsgId></GrpHdr><TxInfAndSts><EndToEndId>{idSystemB}</EndToEndId><Dbtr><Nm>PAYER-{idSystemB}</Nm></Dbtr><Cdtr><Nm>PAYEE-{idSystemB}</Nm></Cdtr></TxInfAndSts></Document>""";
 
         // 2. Act: Send request and wait for timeout (configured to 10s in fixture)
         var response = await _client.PostAsync("/api/spi/messages", 

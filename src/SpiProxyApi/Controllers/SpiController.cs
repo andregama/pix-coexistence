@@ -45,8 +45,13 @@ public sealed class SpiController : ControllerBase
 
         if (result.IsError)
         {
-            var statusCode = result.ErrorCode == "SPI9999" ? 504 : 200; // Bacen errors are often 200 OK with error XML, but timeout is 504 per original code
-            return StatusCode(statusCode, Content(BuildErrorXml("RJCT", result.ErrorCode!, result.ErrorReason!), "application/xml"));
+            var statusCode = result.ErrorCode == "SPI9999" ? 504 : 200;
+            return new ContentResult
+            {
+                StatusCode = statusCode,
+                Content = BuildErrorXml("RJCT", result.ErrorCode!, result.ErrorReason!),
+                ContentType = "application/xml"
+            };
         }
 
         return Content(result.ResponseXml!, "application/xml");

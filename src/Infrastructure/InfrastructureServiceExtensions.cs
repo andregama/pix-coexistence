@@ -28,9 +28,9 @@ public static class InfrastructureServiceExtensions
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        services.AddDbContext<CoexistenceDbContext>(options =>
+        services.AddDbContext<CoexistenceDbContext>((sp, options) =>
             options.UseSqlServer(
-                configuration.GetConnectionString("SqlServer"),
+                sp.GetRequiredService<IConfiguration>().GetConnectionString("SqlServer"),
                 sql => sql.CommandTimeout(30)));
 
         services.AddScoped<ISpiSentMsgRepository, SpiSentMsgRepository>();
@@ -41,11 +41,12 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<ISpiMetrics>(spiMetrics);
         services.AddSingleton(spiMetrics);
 
-        var redisConnection = configuration.GetConnectionString("Redis")
-            ?? throw new InvalidOperationException("Redis connection string is required.");
-
-        services.AddSingleton<IConnectionMultiplexer>(
-            ConnectionMultiplexer.Connect(redisConnection));
+        services.AddSingleton<IConnectionMultiplexer>(sp =>
+        {
+            var cs = sp.GetRequiredService<IConfiguration>().GetConnectionString("Redis")
+                ?? throw new InvalidOperationException("Redis connection string is required.");
+            return ConnectionMultiplexer.Connect(cs);
+        });
         services.AddSingleton<IResponseCache, RedisResponseCache>();
 
         services.AddSingleton<IXmlSigningService, XmlSigningService>();
@@ -54,7 +55,7 @@ public static class InfrastructureServiceExtensions
         AddHsmServices(services, configuration, environment);
         AddCertificateValidator(services, configuration, environment);
         AddOrchestratorClient(services, configuration, environment);
-        AddKafkaProducer(services, configuration);
+        AddKafkaProducer(services);
 
         // Singleton — KafkaPublisher wraps the singleton IProducer<string,string>.
         services.AddSingleton<IKafkaPublisher, KafkaPublisher>();
@@ -123,13 +124,12 @@ public static class InfrastructureServiceExtensions
         }
     }
 
-    private static void AddKafkaProducer(IServiceCollection services, IConfiguration configuration)
+    private static void AddKafkaProducer(IServiceCollection services)
     {
-        var bootstrapServers = configuration["Kafka:BootstrapServers"]
-            ?? throw new InvalidOperationException("Kafka:BootstrapServers is required.");
-
-        services.AddSingleton(_ =>
+        services.AddSingleton<IProducer<string, string>>(sp =>
         {
+            var bootstrapServers = sp.GetRequiredService<IConfiguration>()["Kafka:BootstrapServers"]
+                ?? throw new InvalidOperationException("Kafka:BootstrapServers is required.");
             var config = new ProducerConfig
             {
                 BootstrapServers = bootstrapServers,
@@ -137,7 +137,6 @@ public static class InfrastructureServiceExtensions
                 EnableIdempotence = true,
                 MessageSendMaxRetries = 5,
                 RetryBackoffMs = 200,
-                // Prevents message loss when broker is temporarily unavailable
                 MessageTimeoutMs = 30_000,
             };
             return new ProducerBuilder<string, string>(config).Build();

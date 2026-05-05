@@ -36,6 +36,11 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Yield before blocking so BackgroundService.StartAsync can return immediately.
+        // Without this, _consumer.Consume() holds the host startup thread indefinitely
+        // because it is a synchronous blocking call with no await before it.
+        await Task.Yield();
+
         _consumer.Subscribe(_topic);
         _logger.LogConsumerStarted(_topic);
 

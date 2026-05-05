@@ -82,7 +82,7 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
 
         // Force stale record's CreatedAt to 40 days ago
         await ctx.Database.ExecuteSqlRawAsync(
-            "UPDATE SpiSentMsgs SET CreatedAt = {0} WHERE IdSystemA = {1}",
+            "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdSystemA = {1}",
             DateTime.UtcNow.AddDays(-40), staleId);
 
         var repo = new SpiSentMsgRepository(ctx);

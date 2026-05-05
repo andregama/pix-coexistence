@@ -92,7 +92,7 @@ public sealed class ReceiveSpiRequestUseCase : IReceiveSpiRequestUseCase
             return new ReceiveSpiRequestResult(ResponseXml: response);
         }
 
-        _logger.LogWarning("SPI request timed out after {TimeoutSeconds}s. MessageId={MessageId} IdSystemB={IdSystemB}", messageId, idSystemB, _timeoutSeconds);
+        _logger.LogWarning("SPI request timed out after {TimeoutSeconds}s. MessageId={MessageId} IdSystemB={IdSystemB}", _timeoutSeconds, messageId, idSystemB);
         return new ReceiveSpiRequestResult(IsError: true, ErrorCode: "SPI9999", ErrorReason: "Processing timeout");
     }
 }
