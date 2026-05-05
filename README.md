@@ -129,7 +129,7 @@ dotnet run --project src/SpiProxyWorker/ConvivenciaPix.SpiProxyWorker.csproj
 dotnet run --project src/SpiComparisonEngine/ConvivenciaPix.SpiComparisonEngine.csproj
 ```
 
-The API will be available at `https://localhost:5001`. Swagger UI is at `https://localhost:5001/swagger`.
+The API will be available at `https://localhost:7101` (HTTP: `http://localhost:5152`). Swagger UI is at `https://localhost:7101/swagger`.
 
 ---
 
@@ -205,7 +205,7 @@ In Development, `LocalDinamoSdkClient` and `StubOrchestratorClient` are injected
 
 | Tool | URL | What it shows |
 |---|---|---|
-| Swagger | `https://localhost:5001/swagger` | SPI Proxy API docs and manual testing |
+| Swagger | `https://localhost:7101/swagger` | SPI Proxy API docs and manual testing |
 | Kafka UI | `http://localhost:8080` | Topic lag, message browser |
 | Debezium UI | `http://localhost:8084` | CDC connector status |
 | Jaeger | `http://localhost:16686` | Distributed traces across all services |
