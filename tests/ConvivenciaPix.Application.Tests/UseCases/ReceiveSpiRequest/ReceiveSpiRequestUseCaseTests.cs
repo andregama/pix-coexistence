@@ -1,102 +1,107 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
-using Xunit;
 using FluentAssertions;
-using FluentValidation;
-using FluentValidation.Results;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Xunit;
 
 namespace ConvivenciaPix.Application.Tests.UseCases.ReceiveSpiRequest;
 
 public sealed class ReceiveSpiRequestUseCaseTests
 {
-    private readonly Mock<IResponseCache> _cacheMock = new();
     private readonly Mock<IKafkaPublisher> _publisherMock = new();
     private readonly Mock<ISpiXmlParser> _xmlParserMock = new();
-    private readonly Mock<IValidator<string>> _validatorMock = new();
-    private readonly Mock<ILogger<ReceiveSpiRequestUseCase>> _loggerMock = new();
-    private readonly IOptions<SpiProxyOptions> _options = Options.Create(new SpiProxyOptions { TimeoutSeconds = 1 });
+    private readonly Mock<IResponseCache> _cacheMock = new();
 
-    private readonly ReceiveSpiRequestUseCase _sut;
+    private ReceiveSpiRequestUseCase BuildSut() => new(
+        _publisherMock.Object,
+        _xmlParserMock.Object,
+        _cacheMock.Object,
+        NullLogger<ReceiveSpiRequestUseCase>.Instance);
 
-    public ReceiveSpiRequestUseCaseTests()
+    [Fact]
+    public async Task SingleMessage_ReturnsOnePiResourceId_PublishesEnvelopeWithIspb()
     {
-        _sut = new ReceiveSpiRequestUseCase(
-            _cacheMock.Object,
-            _publisherMock.Object,
-            _xmlParserMock.Object,
-            _validatorMock.Object,
-            _options,
-            _loggerMock.Object);
+        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("msg-1");
+        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("e2e-1");
+        KafkaEnvelope? captured = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.requests", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, env, _) => captured = env);
+
+        var sut = BuildSut();
+        var ids = await sut.ExecuteAsync(
+            new[] { new SpiInboundMessage("<Document/>", "application/xml") },
+            ispb: "12345678",
+            CancellationToken.None);
+
+        ids.Should().HaveCount(1);
+        ids[0].Should().NotBeNullOrWhiteSpace();
+        captured.Should().NotBeNull();
+        captured!.Ispb.Should().Be("12345678");
+        captured.PiResourceId.Should().Be(ids[0]);
+        captured.MessageId.Should().Be("msg-1");
+        captured.CorrelationId.Should().Be("e2e-1");
     }
 
     [Fact]
-    public async Task ExecuteAsync_ValidationFails_ReturnsError()
+    public async Task MultipleMessages_ReturnsResourceIdsInOrder_PublishesEach()
     {
-        _validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ValidationResult(new[] { new ValidationFailure("xml", "Invalid XML") }));
+        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("msg");
+        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("e2e");
 
-        var result = await _sut.ExecuteAsync("<invalid/>", CancellationToken.None);
+        var sut = BuildSut();
+        var inbound = new[]
+        {
+            new SpiInboundMessage("<a/>", "application/xml"),
+            new SpiInboundMessage("<b/>", "application/xml"),
+            new SpiInboundMessage("<c/>", "application/xml"),
+        };
+        var ids = await sut.ExecuteAsync(inbound, ispb: "11111111", CancellationToken.None);
 
-        result.IsError.Should().BeTrue();
-        result.ErrorCode.Should().Be("SPI2023");
-        result.ErrorReason.Should().Be("Invalid XML");
+        ids.Should().HaveCount(3);
+        ids.Distinct().Should().HaveCount(3);
+        _publisherMock.Verify(
+            p => p.PublishAsync("spi.systemb.requests", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
     }
 
     [Fact]
-    public async Task ExecuteAsync_IdempotencyHit_ReturnsCachedResponse()
+    public async Task UnparseableXml_StillAcksWithFreshPiResourceId()
     {
-        _validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ValidationResult());
-        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("msg-123");
-        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("sysb-123");
-        _cacheMock.Setup(c => c.GetIdempotencyKeyAsync("msg-123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync("<cached-response/>");
+        // Per Bacen §2.2.1: no syntactic/signature validation at this layer.
+        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>()))
+            .Throws(new InvalidOperationException("not valid"));
 
-        var result = await _sut.ExecuteAsync("<request/>", CancellationToken.None);
+        var sut = BuildSut();
+        var ids = await sut.ExecuteAsync(
+            new[] { new SpiInboundMessage("not xml", "application/xml") },
+            ispb: "00000000",
+            CancellationToken.None);
 
-        result.IsError.Should().BeFalse();
-        result.ResponseXml.Should().Be("<cached-response/>");
-        _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()), Times.Never);
+        ids.Should().HaveCount(1);
+        _publisherMock.Verify(
+            p => p.PublishAsync("spi.systemb.requests", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_NormalFlow_PublishesAndWaits()
+    public async Task DuplicateMsgId_BothSucceedWithDistinctPiResourceIds()
     {
-        _validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ValidationResult());
-        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("msg-123");
-        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("sysb-123");
-        _cacheMock.Setup(c => c.GetIdempotencyKeyAsync("msg-123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-        _cacheMock.Setup(c => c.WaitForResponseAsync("sysb-123", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("<response/>");
+        // Per Bacen §2.2.1: duplicate sends are GRAVADAS de novo; idempotency happens during processing.
+        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("same-msg");
+        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("same-e2e");
 
-        var result = await _sut.ExecuteAsync("<request/>", CancellationToken.None);
+        var sut = BuildSut();
+        var first = await sut.ExecuteAsync(
+            new[] { new SpiInboundMessage("<a/>", "application/xml") }, "11111111", CancellationToken.None);
+        var second = await sut.ExecuteAsync(
+            new[] { new SpiInboundMessage("<a/>", "application/xml") }, "11111111", CancellationToken.None);
 
-        result.IsError.Should().BeFalse();
-        result.ResponseXml.Should().Be("<response/>");
-        _publisherMock.Verify(p => p.PublishAsync("spi.systemb.requests", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()), Times.Once);
-        _cacheMock.Verify(c => c.SetIdempotencyKeyAsync("msg-123", "<response/>", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_Timeout_Returns504Error()
-    {
-        _validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ValidationResult());
-        _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("msg-123");
-        _xmlParserMock.Setup(p => p.ExtractEndToEndId(It.IsAny<string>())).Returns("sysb-123");
-        _cacheMock.Setup(c => c.WaitForResponseAsync("sysb-123", It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
-
-        var result = await _sut.ExecuteAsync("<request/>", CancellationToken.None);
-
-        result.IsError.Should().BeTrue();
-        result.ErrorCode.Should().Be("SPI9999");
-        result.ErrorReason.Should().Be("Processing timeout");
+        first[0].Should().NotBe(second[0]);
+        _publisherMock.Verify(
+            p => p.PublishAsync("spi.systemb.requests", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 }

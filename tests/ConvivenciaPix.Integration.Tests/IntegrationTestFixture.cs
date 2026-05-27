@@ -66,7 +66,9 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
                 ["ConnectionStrings:SqlServer"] = SqlConnectionString,
                 ["ConnectionStrings:Redis"] = RedisConnectionString,
                 ["Kafka:BootstrapServers"] = KafkaBootstrapServers,
-                ["ProxyApi:TimeoutSeconds"] = "10"
+                ["ProxyApi:Outbound:LongPollSeconds"] = "2",
+                ["ProxyApi:Outbound:StreamTtlMinutes"] = "10",
+                ["ProxyApi:Outbound:MaxMessagesPerMultipart"] = "10"
             });
         });
 

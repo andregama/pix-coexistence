@@ -1,8 +1,9 @@
 using ConvivenciaPix.Application;
 using ConvivenciaPix.Application.Interfaces;
-using ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
+using ConvivenciaPix.Application.UseCases.PullStream;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Metrics;
+using ConvivenciaPix.Infrastructure.Outbound;
 using Microsoft.AspNetCore.Authentication.Certificate;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
@@ -45,7 +46,8 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
-builder.Services.Configure<SpiProxyOptions>(builder.Configuration.GetSection("ProxyApi"));
+builder.Services.Configure<OutboundStreamOptions>(builder.Configuration.GetSection("ProxyApi:Outbound"));
+builder.Services.Configure<PullStreamOptions>(builder.Configuration.GetSection("ProxyApi:Outbound"));
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 

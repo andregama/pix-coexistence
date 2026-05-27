@@ -1,12 +1,16 @@
+using ConvivenciaPix.Application.DTOs;
+
 namespace ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
 
 public interface IReceiveSpiRequestUseCase
 {
-    Task<ReceiveSpiRequestResult> ExecuteAsync(string rawXml, CancellationToken cancellationToken);
+    /// <summary>
+    /// Stores each inbound message and publishes it to the processing pipeline (no validation,
+    /// no idempotency check — per Bacen SPI manual §2.2.1). Returns the PI-ResourceId assigned
+    /// to each message, in input order.
+    /// </summary>
+    Task<IReadOnlyList<string>> ExecuteAsync(
+        IReadOnlyList<SpiInboundMessage> messages,
+        string ispb,
+        CancellationToken cancellationToken);
 }
-
-public sealed record ReceiveSpiRequestResult(
-    string? ResponseXml = null,
-    bool IsError = false,
-    string? ErrorReason = null,
-    string? ErrorCode = null);

@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.Mappers;
@@ -16,10 +17,10 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
 {
     private const int CorrelationRetries = 5;
     private static readonly TimeSpan CorrelationRetryDelay = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan ResponseCacheTtl = TimeSpan.FromMinutes(30);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IResponseCache _responseCache;
+    private readonly IOutboundStream _outboundStream;
     private readonly IHsmService _hsmService;
     private readonly IXmlSigningService _xmlSigningService;
     private readonly IKafkaPublisher _publisher;
@@ -29,6 +30,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
     public PropagateResponseUseCase(
         IServiceScopeFactory scopeFactory,
         IResponseCache responseCache,
+        IOutboundStream outboundStream,
         IHsmService hsmService,
         IXmlSigningService xmlSigningService,
         IKafkaPublisher publisher,
@@ -37,6 +39,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
     {
         _scopeFactory = scopeFactory;
         _responseCache = responseCache;
+        _outboundStream = outboundStream;
         _hsmService = hsmService;
         _xmlSigningService = xmlSigningService;
         _publisher = publisher;
@@ -92,22 +95,25 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
                 XDocument.Parse(responseDto.SignedXml), cert);
         }
 
-        // Deposit signed response in Redis and signal waiters via Pub/Sub
-        using (SpiActivitySource.StartProxyActivity("proxy.redis-deposit"))
+        // Enqueue onto the outbound stream so System B can pull it via GET /out/{ispb}/stream/...
+        var piResourceId = ResourceIdGenerator.Generate();
+        using (SpiActivitySource.StartProxyActivity("proxy.outbound-enqueue"))
         {
-            await _responseCache.SetAsync(idSystemB, signedXml, ResponseCacheTtl, cancellationToken);
-            await _responseCache.SignalResponseAsync(idSystemB, signedXml, cancellationToken);
+            await _outboundStream.EnqueueAsync(piResourceId, signedXml, cancellationToken);
         }
 
         _metrics.RecordProxyResponseLatency(sw.Elapsed.TotalMilliseconds);
-        _logger.LogInformation("Signed response deposited in Redis. IdSystemA={IdSystemA} → IdSystemB={IdSystemB}", idSystemA, idSystemB);
+        _logger.LogInformation(
+            "Signed response enqueued on outbound stream. IdSystemA={IdSystemA} IdSystemB={IdSystemB} PiResourceId={PiResourceId}",
+            idSystemA, idSystemB, piResourceId);
 
-        // Publish signed response to System B responses topic
+        // Publish signed response to System B responses topic (audit / comparison)
         var responseEnvelope = new KafkaEnvelope(
             MessageId: responseDto.MessageId,
             PayloadBase64: Convert.ToBase64String(Encoding.UTF8.GetBytes(signedXml)),
             Timestamp: DateTimeOffset.UtcNow,
-            CorrelationId: idSystemB);
+            CorrelationId: idSystemB,
+            PiResourceId: piResourceId);
 
         await _publisher.PublishAsync("spi.systemb.responses", responseEnvelope, cancellationToken);
 

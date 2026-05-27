@@ -32,30 +32,4 @@ public sealed class RedisResponseCacheTests : IClassFixture<RedisFixture>
         var result = await _cache.GetAsync(UniqueKey());
         result.Should().BeNull();
     }
-
-    [Fact]
-    public async Task SetIdempotencyKeyAsync_FirstWrite_Stores()
-    {
-        var msgId = UniqueKey();
-        await _cache.SetIdempotencyKeyAsync(msgId, "first-response", TimeSpan.FromHours(1));
-        var result = await _cache.GetIdempotencyKeyAsync(msgId);
-        result.Should().Be("first-response");
-    }
-
-    [Fact]
-    public async Task SetIdempotencyKeyAsync_SecondWrite_DoesNotOverwrite()
-    {
-        var msgId = UniqueKey();
-        await _cache.SetIdempotencyKeyAsync(msgId, "first-response", TimeSpan.FromHours(1));
-        await _cache.SetIdempotencyKeyAsync(msgId, "second-response", TimeSpan.FromHours(1));
-        var result = await _cache.GetIdempotencyKeyAsync(msgId);
-        result.Should().Be("first-response");
-    }
-
-    [Fact]
-    public async Task GetIdempotencyKeyAsync_UnknownKey_ReturnsNull()
-    {
-        var result = await _cache.GetIdempotencyKeyAsync(UniqueKey());
-        result.Should().BeNull();
-    }
 }

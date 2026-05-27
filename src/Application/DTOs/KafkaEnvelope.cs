@@ -5,4 +5,6 @@ public sealed record KafkaEnvelope(
     string PayloadBase64,
     DateTimeOffset Timestamp,
     string? CorrelationId = null,
-    string? SchemaVersion = "1.0");
+    string? SchemaVersion = "1.0",
+    string? Ispb = null,
+    string? PiResourceId = null);

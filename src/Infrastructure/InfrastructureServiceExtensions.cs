@@ -8,6 +8,7 @@ using ConvivenciaPix.Infrastructure.Jobs;
 using ConvivenciaPix.Infrastructure.Messaging;
 using ConvivenciaPix.Infrastructure.Metrics;
 using ConvivenciaPix.Infrastructure.Orchestrator;
+using ConvivenciaPix.Infrastructure.Outbound;
 using ConvivenciaPix.Infrastructure.Parsing;
 using ConvivenciaPix.Infrastructure.Persistence;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
@@ -48,6 +49,7 @@ public static class InfrastructureServiceExtensions
             return ConnectionMultiplexer.Connect(cs);
         });
         services.AddSingleton<IResponseCache, RedisResponseCache>();
+        services.AddSingleton<IOutboundStream, RedisOutboundStream>();
 
         services.AddSingleton<IXmlSigningService, XmlSigningService>();
         services.AddSingleton<ISpiXmlParser, SpiXmlParser>();
