@@ -7,7 +7,6 @@ using ConvivenciaPix.SpiProxyWorker.Consumers;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -41,10 +40,8 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
             _redisContainer.StartAsync(),
             _kafkaContainer.StartAsync());
 
-        // Apply migrations
-        using var scope = Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<CoexistenceDbContext>();
-        await db.Database.MigrateAsync();
+        // Provision schema from infra/sql/*.sql (idempotent, same scripts used by `make migrate`)
+        await SqlSchemaBootstrapper.ApplyAsync(SqlConnectionString);
     }
 
     public new async Task DisposeAsync()

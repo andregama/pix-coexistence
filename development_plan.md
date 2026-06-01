@@ -94,7 +94,7 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 - **Developer Automation (Makefile):** ✅
   - `make infra-up`: Start local stack.
   - `make infra-down`: Stop containers.
-  - `make migrate`: Apply EF migrations.
+  - `make migrate`: Apply the SQL scripts in `infra/sql/` (idempotent, no EF migrations).
   - `make test`: Run full test suite.
   - `make lint`: Run `dotnet format`.
 - **Documentation:** Integrated **Swagger / OpenAPI** for ISO 20022 payloads with full XML comment support. ✅

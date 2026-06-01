@@ -8,16 +8,19 @@
   <ItemGroup>
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
     <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="Quartz" />
     <PackageReference Include="Quartz.Extensions.Hosting" />
     <PackageReference Include="Quartz.Extensions.DependencyInjection" />
     <PackageReference Include="System.Security.Cryptography.Xml" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+  </ItemGroup>
+
+  <!-- Embed the canonical schema scripts from infra/sql so SqlSchemaBootstrapper can
+       apply them in-process (used by test fixtures). The same files are run via
+       sqlcmd for local/CI provisioning — see `make migrate`. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\infra\sql\*.sql" LinkBase="SqlScripts" />
   </ItemGroup>
 
 </Project>

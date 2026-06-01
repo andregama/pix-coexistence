@@ -16,8 +16,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
         await _container.StartAsync();
         ConnectionString = _container.GetConnectionString();
 
-        await using var ctx = CreateDbContext();
-        await ctx.Database.MigrateAsync();
+        await SqlSchemaBootstrapper.ApplyAsync(ConnectionString);
     }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();

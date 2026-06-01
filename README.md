@@ -81,7 +81,6 @@ tests/
 |---|---|
 | .NET SDK | 8.0+ |
 | Docker Desktop | 4.x+ |
-| `dotnet ef` CLI | `dotnet tool install -g dotnet-ef` |
 
 ---
 
@@ -103,13 +102,15 @@ make infra-up
 
 This starts: SQL Server, Kafka (+ Zookeeper), Redis, Debezium, Kafka UI, Debezium UI, Jaeger, Prometheus, and Grafana.
 
-Wait ~30 s for SQL Server to finish initialising before running migrations.
+Wait ~30 s for SQL Server to finish initialising before provisioning the schema.
 
-### 3. Apply database migrations
+### 3. Provision the database schema
 
 ```bash
 make migrate
 ```
+
+This creates the `DB_COEXISTENCE` database (if missing) and applies every script in `infra/sql/` against it via the `sqlcmd` shipped inside the SQL Server container. The scripts are idempotent — re-running them is safe. To add a new table or index, drop a new numbered file into `infra/sql/` (e.g. `004_…sql`) and re-run `make migrate`; the test fixtures pick it up automatically because the scripts are embedded into the Infrastructure assembly.
 
 ### 4. Run the services
 
