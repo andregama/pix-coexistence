@@ -3,9 +3,8 @@ namespace ConvivenciaPix.Domain.Entities;
 public sealed class SpiDiscrepancy
 {
     public Guid Id { get; private set; }
-    public string IdSystemA { get; private set; } = default!;
-    public string IdSystemB { get; private set; } = default!;
-    public string CorrelationSource { get; private set; } = default!;
+    public string IdempotentId { get; private set; } = default!;
+    public string MsgType { get; private set; } = default!;
     public string Field { get; private set; } = default!;
     public string? SystemAValue { get; private set; }
     public string? SystemBValue { get; private set; }
@@ -14,9 +13,8 @@ public sealed class SpiDiscrepancy
     private SpiDiscrepancy() { }
 
     public static SpiDiscrepancy Create(
-        string idSystemA,
-        string idSystemB,
-        string correlationSource,
+        string idempotentId,
+        string msgType,
         string field,
         string? systemAValue,
         string? systemBValue)
@@ -24,9 +22,8 @@ public sealed class SpiDiscrepancy
         return new SpiDiscrepancy
         {
             Id = Guid.NewGuid(),
-            IdSystemA = idSystemA,
-            IdSystemB = idSystemB,
-            CorrelationSource = correlationSource,
+            IdempotentId = idempotentId,
+            MsgType = msgType,
             Field = field,
             SystemAValue = systemAValue,
             SystemBValue = systemBValue,

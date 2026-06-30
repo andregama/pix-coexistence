@@ -66,8 +66,10 @@ services:
       "
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systemb.requests --partitions 3 --replication-factor 1
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systemb.requests.dlq --partitions 1 --replication-factor 1
-      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.responses --partitions 3 --replication-factor 1
-      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.responses.dlq --partitions 1 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.outbound --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.outbound.dlq --partitions 1 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.inbound --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systema.inbound.dlq --partitions 1 --replication-factor 1
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systemb.responses --partitions 3 --replication-factor 1
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.systemb.responses.dlq --partitions 1 --replication-factor 1
       kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic spi.correlation.events --partitions 3 --replication-factor 1

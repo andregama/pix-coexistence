@@ -4,30 +4,30 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ConvivenciaPix.Infrastructure.Persistence.Repositories;
 
-public sealed class SpiSentMsgRepository : ISpiSentMsgRepository
+public sealed class SpiReceivedMsgRepository : ISpiReceivedMsgRepository
 {
     private readonly CoexistenceDbContext _db;
 
-    public SpiSentMsgRepository(CoexistenceDbContext db) => _db = db;
+    public SpiReceivedMsgRepository(CoexistenceDbContext db) => _db = db;
 
-    public Task<SpiSentMsg?> FindByIdempotentIdAsync(string idempotentId, CancellationToken cancellationToken = default) =>
-        _db.SpiSentMsgs.AsNoTracking()
+    public Task<SpiReceivedMsg?> FindByIdempotentIdAsync(string idempotentId, CancellationToken cancellationToken = default) =>
+        _db.SpiReceivedMsgs.AsNoTracking()
             .FirstOrDefaultAsync(x => x.IdempotentId == idempotentId, cancellationToken);
 
-    public async Task AddAsync(SpiSentMsg msg, CancellationToken cancellationToken = default)
+    public async Task AddAsync(SpiReceivedMsg msg, CancellationToken cancellationToken = default)
     {
-        _db.SpiSentMsgs.Add(msg);
+        _db.SpiReceivedMsgs.Add(msg);
         await _db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task UpdateAsync(SpiSentMsg msg, CancellationToken cancellationToken = default)
+    public async Task UpdateAsync(SpiReceivedMsg msg, CancellationToken cancellationToken = default)
     {
-        _db.SpiSentMsgs.Update(msg);
+        _db.SpiReceivedMsgs.Update(msg);
         await _db.SaveChangesAsync(cancellationToken);
     }
 
     public Task<int> DeleteOlderThanAsync(DateTime cutoff, CancellationToken cancellationToken = default) =>
-        _db.SpiSentMsgs
+        _db.SpiReceivedMsgs
             .Where(x => x.CreatedAt < cutoff)
             .ExecuteDeleteAsync(cancellationToken);
 }

@@ -5,18 +5,17 @@ using System.Xml.XPath;
 namespace ConvivenciaPix.Infrastructure.Parsing;
 
 /// <summary>
-/// Parses ISO 20022 SPI messages (pacs.008, pacs.004) used by Bacen.
+/// Parses ISO 20022 SPI messages (pacs.008, pacs.002, pacs.004) used by Bacen.
 /// XPath queries are namespace-aware; missing optional fields return safe defaults.
 /// </summary>
 public sealed class SpiXmlParser : ISpiXmlParser
 {
-    // Namespaces used by Bacen SPI messages
     private static readonly (string Prefix, string Uri)[] KnownNamespaces =
     [
         ("pacs008", "urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08"),
+        ("pacs002", "urn:iso:std:iso:20022:tech:xsd:pacs.002.001.10"),
         ("pacs004", "urn:iso:std:iso:20022:tech:xsd:pacs.004.001.09"),
         ("head",    "urn:iso:std:iso:20022:tech:xsd:head.001.001.02"),
-        ("doc",     "urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08"),
     ];
 
     public string ExtractMessageId(string xml)
@@ -44,7 +43,6 @@ public sealed class SpiXmlParser : ISpiXmlParser
             "//*[local-name()='InstdAmt']")
             ?? "0";
 
-        // Strip currency attribute value if element has it
         return decimal.TryParse(raw, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var amount)
             ? amount
@@ -83,6 +81,71 @@ public sealed class SpiXmlParser : ISpiXmlParser
             : DateTimeOffset.UtcNow;
     }
 
+    public string ExtractMessageType(string xml)
+    {
+        var (doc, ns) = Load(xml);
+
+        // ISO 20022 business application header carries <MsgDefIdr> with the message type
+        var msgDefIdr = SelectText(doc, ns,
+            "//head:AppHdr/head:MsgDefIdr",
+            "//*[local-name()='MsgDefIdr']");
+
+        if (msgDefIdr is not null)
+        {
+            if (msgDefIdr.StartsWith("pacs.008", StringComparison.OrdinalIgnoreCase)) return "pacs.008";
+            if (msgDefIdr.StartsWith("pacs.002", StringComparison.OrdinalIgnoreCase)) return "pacs.002";
+            if (msgDefIdr.StartsWith("pacs.004", StringComparison.OrdinalIgnoreCase)) return "pacs.004";
+        }
+
+        // Fallback: infer from the business message element name.
+        // Real Bacen XML is <Document><BusinessMsg>...</BusinessMsg></Document>; the root is
+        // always "Document", so we inspect the first child to get the message type.
+        var rootName = doc.DocumentElement?.LocalName;
+        var businessElement = rootName == "Document"
+            ? doc.DocumentElement?.FirstChild?.LocalName
+            : rootName;
+
+        return businessElement switch
+        {
+            "FIToFICstmrCdtTrf" => "pacs.008",
+            "FIToFIPmtStsRpt"   => "pacs.002",
+            "PmtRtr"            => "pacs.004",
+            _ => throw new InvalidOperationException(
+                $"Cannot determine message type from business element '{businessElement}' and no MsgDefIdr found.")
+        };
+    }
+
+    public string ExtractIdempotentId(string xml, string msgType)
+    {
+        var (doc, ns) = Load(xml);
+        return msgType switch
+        {
+            "pacs.008" => SelectText(doc, ns,
+                    "//*[local-name()='CdtTrfTxInf']/*[local-name()='PmtId']/*[local-name()='EndToEndId']")
+                ?? throw new InvalidOperationException("pacs.008 XML missing CdtTrfTxInf/PmtId/EndToEndId"),
+
+            "pacs.002" => SelectText(doc, ns,
+                    "//*[local-name()='TxInfAndSts']/*[local-name()='OrgnlEndToEndId']")
+                ?? throw new InvalidOperationException("pacs.002 XML missing TxInfAndSts/OrgnlEndToEndId"),
+
+            "pacs.004" => SelectText(doc, ns,
+                    "//*[local-name()='TxInf']/*[local-name()='RtrId']")
+                ?? throw new InvalidOperationException("pacs.004 XML missing TxInf/RtrId"),
+
+            _ => throw new ArgumentException($"Unsupported msgType '{msgType}'", nameof(msgType))
+        };
+    }
+
+    public string? ExtractOriginalIdempotentId(string xml, string msgType)
+    {
+        if (msgType != "pacs.004")
+            return null;
+
+        var (doc, ns) = Load(xml);
+        return SelectText(doc, ns,
+            "//*[local-name()='TxInf']/*[local-name()='OrgnlEndToEndId']");
+    }
+
     private static (XmlDocument doc, XmlNamespaceManager ns) Load(string xml)
     {
         var doc = new XmlDocument();
@@ -105,7 +168,7 @@ public sealed class SpiXmlParser : ISpiXmlParser
             }
             catch (XPathException)
             {
-                // Try next xpath
+                // try next xpath
             }
         }
         return null;

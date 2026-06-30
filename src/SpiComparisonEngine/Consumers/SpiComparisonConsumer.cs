@@ -56,8 +56,7 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
         var discrepancies = CompareFields(comparisonEvent);
 
         _logger.LogComparisonResult(
-            comparisonEvent.IdSystemA, comparisonEvent.IdSystemB,
-            discrepancies.Count, comparisonEvent.CorrelationSource);
+            comparisonEvent.IdempotentId, comparisonEvent.MsgType, discrepancies.Count);
 
         if (discrepancies.Count > 0)
         {
@@ -108,8 +107,7 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
         var repo = scope.ServiceProvider.GetRequiredService<ISpiDiscrepancyRepository>();
 
         var entities = discrepancies.Select(d => SpiDiscrepancy.Create(
-            ev.IdSystemA, ev.IdSystemB, ev.CorrelationSource,
-            d.FieldName, d.ValueA, d.ValueB)).ToList();
+            ev.IdempotentId, ev.MsgType, d.FieldName, d.ValueA, d.ValueB)).ToList();
 
         await repo.AddRangeAsync(entities, cancellationToken);
 
@@ -123,22 +121,21 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
         CancellationToken cancellationToken)
     {
         var discrepancyEvent = new SpiDiscrepancyDetected(
-            IdSystemA: ev.IdSystemA,
-            IdSystemB: ev.IdSystemB,
-            CorrelationSource: ev.CorrelationSource,
+            IdempotentId: ev.IdempotentId,
+            MsgType: ev.MsgType,
             Discrepancies: discrepancies,
             DetectedAt: DateTimeOffset.UtcNow);
 
         var envelope = new KafkaEnvelope(
-            MessageId: Guid.NewGuid().ToString(),
+            MessageId: ev.IdempotentId,
             PayloadBase64: Convert.ToBase64String(
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(discrepancyEvent))),
             Timestamp: DateTimeOffset.UtcNow,
-            CorrelationId: ev.IdSystemA);
+            CorrelationId: ev.IdempotentId);
 
         await _publisher.PublishAsync(Topics.Discrepancies, envelope, cancellationToken);
 
-        _logger.LogDiscrepancyPublished(ev.IdSystemA, ev.IdSystemB, discrepancies.Count);
+        _logger.LogDiscrepancyPublished(ev.IdempotentId, discrepancies.Count);
     }
 
     private static IConsumer<string, string> BuildConsumer(IConfiguration configuration) =>
@@ -155,12 +152,10 @@ public sealed class SpiComparisonConsumer : KafkaConsumerBase<string, string>
 internal static partial class SpiComparisonConsumerLogMessages
 {
     [LoggerMessage(Level = LogLevel.Debug,
-        Message = "Comparison complete. IdSystemA={IdSystemA} IdSystemB={IdSystemB} Discrepancies={Count} Source={Source}")]
-    public static partial void LogComparisonResult(this ILogger logger, string idSystemA, string idSystemB,
-        int count, string source);
+        Message = "Comparison complete. IdempotentId={IdempotentId} MsgType={MsgType} Discrepancies={Count}")]
+    public static partial void LogComparisonResult(this ILogger logger, string idempotentId, string msgType, int count);
 
     [LoggerMessage(Level = LogLevel.Warning,
-        Message = "Discrepancy detected and published. IdSystemA={IdSystemA} IdSystemB={IdSystemB} Fields={Count}")]
-    public static partial void LogDiscrepancyPublished(this ILogger logger, string idSystemA, string idSystemB,
-        int count);
+        Message = "Discrepancy detected and published. IdempotentId={IdempotentId} Fields={Count}")]
+    public static partial void LogDiscrepancyPublished(this ILogger logger, string idempotentId, int count);
 }

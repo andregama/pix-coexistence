@@ -7,7 +7,6 @@ using ConvivenciaPix.Infrastructure.Hsm;
 using ConvivenciaPix.Infrastructure.Jobs;
 using ConvivenciaPix.Infrastructure.Messaging;
 using ConvivenciaPix.Infrastructure.Metrics;
-using ConvivenciaPix.Infrastructure.Orchestrator;
 using ConvivenciaPix.Infrastructure.Outbound;
 using ConvivenciaPix.Infrastructure.Parsing;
 using ConvivenciaPix.Infrastructure.Persistence;
@@ -35,7 +34,7 @@ public static class InfrastructureServiceExtensions
                 sql => sql.CommandTimeout(30)));
 
         services.AddScoped<ISpiSentMsgRepository, SpiSentMsgRepository>();
-        services.AddScoped<ISpiPendingSystemBMsgRepository, SpiPendingSystemBMsgRepository>();
+        services.AddScoped<ISpiReceivedMsgRepository, SpiReceivedMsgRepository>();
         services.AddScoped<ISpiDiscrepancyRepository, SpiDiscrepancyRepository>();
 
         var spiMetrics = new SpiMetrics();
@@ -56,13 +55,11 @@ public static class InfrastructureServiceExtensions
 
         AddHsmServices(services, configuration, environment);
         AddCertificateValidator(services, configuration, environment);
-        AddOrchestratorClient(services, configuration, environment);
         AddKafkaProducer(services);
 
-        // Singleton — KafkaPublisher wraps the singleton IProducer<string,string>.
         services.AddSingleton<IKafkaPublisher, KafkaPublisher>();
 
-        AddCleanupJob(services);
+        AddCleanupJobs(services);
 
         return services;
     }
@@ -78,9 +75,6 @@ public static class InfrastructureServiceExtensions
         }
         else
         {
-            // LocalDinamoSdkClient uses .NET BCL — no DinamoAPI.dll needed.
-            // For Production with a real HSM: register DinamoNetSdkClient here instead,
-            // after adding DinamoAPI.dll as a local assembly reference.
             services.AddSingleton<IDinamoSdkClient, LocalDinamoSdkClient>();
             services.AddSingleton<IHsmService, DinamoHsmService>();
         }
@@ -96,34 +90,6 @@ public static class InfrastructureServiceExtensions
             services.AddSingleton<ICertificateValidator, DevCertificateValidator>();
         else
             services.AddSingleton<ICertificateValidator, BacenCertificateValidator>();
-    }
-
-    private static void AddOrchestratorClient(
-        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
-    {
-        services.Configure<OrchestratorOptions>(configuration.GetSection("Orchestrator"));
-
-        if (environment.IsDevelopment())
-        {
-            services.AddSingleton<IOrchestratorClient, StubOrchestratorClient>();
-        }
-        else
-        {
-            services.AddHttpClient<IOrchestratorClient, HttpOrchestratorClient>((provider, client) =>
-            {
-                var options = configuration.GetSection("Orchestrator").Get<OrchestratorOptions>()
-                    ?? new OrchestratorOptions();
-
-                if (!string.IsNullOrWhiteSpace(options.BaseUrl))
-                    client.BaseAddress = new Uri(options.BaseUrl);
-
-                if (!string.IsNullOrWhiteSpace(options.ApiKey))
-                    client.DefaultRequestHeaders.Add("X-Api-Key", options.ApiKey);
-
-                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-            })
-            .AddStandardResilienceHandler();
-        }
     }
 
     private static void AddKafkaProducer(IServiceCollection services)
@@ -145,17 +111,23 @@ public static class InfrastructureServiceExtensions
         });
     }
 
-    private static void AddCleanupJob(IServiceCollection services)
+    private static void AddCleanupJobs(IServiceCollection services)
     {
         services.AddQuartz(q =>
         {
-            var jobKey = new JobKey("SpiSentMsgCleanup");
-            q.AddJob<SpiSentMsgCleanupJob>(opts => opts.WithIdentity(jobKey));
+            var sentMsgJobKey = new JobKey("SpiSentMsgCleanup");
+            q.AddJob<SpiSentMsgCleanupJob>(opts => opts.WithIdentity(sentMsgJobKey));
             q.AddTrigger(opts => opts
-                .ForJob(jobKey)
+                .ForJob(sentMsgJobKey)
                 .WithIdentity("SpiSentMsgCleanup-trigger")
-                // Daily at 02:00 UTC
                 .WithCronSchedule("0 0 2 * * ?"));
+
+            var receivedMsgJobKey = new JobKey("SpiReceivedMsgCleanup");
+            q.AddJob<SpiReceivedMsgCleanupJob>(opts => opts.WithIdentity(receivedMsgJobKey));
+            q.AddTrigger(opts => opts
+                .ForJob(receivedMsgJobKey)
+                .WithIdentity("SpiReceivedMsgCleanup-trigger")
+                .WithCronSchedule("0 30 2 * * ?"));
         });
 
         services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);

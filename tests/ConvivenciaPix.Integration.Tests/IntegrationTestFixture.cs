@@ -71,6 +71,9 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
 
         builder.ConfigureServices((context, services) =>
         {
+            services.Configure<ConvivenciaPix.SpiCorrelateWorker.CorrelationOptions>(
+                context.Configuration.GetSection("Correlation"));
+
             // Bypass certificate authentication — TestServer has no TLS layer
             services.PostConfigure<AuthenticationOptions>(options =>
             {
@@ -95,8 +98,9 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
             });
 
             // Register workers as hosted services so they run during the test
-            services.AddHostedService<SystemBSentConsumer>();
-            services.AddHostedService<SystemAResponseCorrelateConsumer>();
+            services.AddHostedService<SystemAOutboundCorrelateConsumer>();
+            services.AddHostedService<SystemBOutboundCorrelateConsumer>();
+            services.AddHostedService<SystemAInboundCorrelateConsumer>();
             services.AddHostedService<SystemAResponseProxyConsumer>();
         });
     }

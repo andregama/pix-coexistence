@@ -16,7 +16,7 @@ public sealed class SpiDiscrepancyRepositoryTests : IClassFixture<SqlServerFixtu
     [Fact]
     public async Task AddAsync_PersistsSingleRow()
     {
-        var d = SpiDiscrepancy.Create(Uid(), Uid(), "Orchestrator", "Amount", "100.00", "99.00");
+        var d = SpiDiscrepancy.Create(Uid(), "pacs.008", "Amount", "100.00", "99.00");
         await using var ctx = _fixture.CreateDbContext();
         var repo = new SpiDiscrepancyRepository(ctx);
 
@@ -30,13 +30,12 @@ public sealed class SpiDiscrepancyRepositoryTests : IClassFixture<SqlServerFixtu
     [Fact]
     public async Task AddRangeAsync_PersistsAllRows()
     {
-        var idA = Uid();
-        var idB = Uid();
+        var idempotentId = Uid();
         var discrepancies = new[]
         {
-            SpiDiscrepancy.Create(idA, idB, "Heuristic", "Amount", "1", "2"),
-            SpiDiscrepancy.Create(idA, idB, "Heuristic", "PayerId", "P1", "P2"),
-            SpiDiscrepancy.Create(idA, idB, "Heuristic", "PayeeId", "Q1", "Q2"),
+            SpiDiscrepancy.Create(idempotentId, "pacs.008", "Amount", "1", "2"),
+            SpiDiscrepancy.Create(idempotentId, "pacs.008", "PayerId", "P1", "P2"),
+            SpiDiscrepancy.Create(idempotentId, "pacs.008", "PayeeId", "Q1", "Q2"),
         };
 
         await using var ctx = _fixture.CreateDbContext();
@@ -44,7 +43,7 @@ public sealed class SpiDiscrepancyRepositoryTests : IClassFixture<SqlServerFixtu
         await repo.AddRangeAsync(discrepancies, CancellationToken.None);
 
         var rows = await ctx.SpiDiscrepancies
-            .Where(x => x.IdSystemA == idA && x.IdSystemB == idB)
+            .Where(x => x.IdempotentId == idempotentId)
             .ToListAsync();
 
         rows.Should().HaveCount(3);

@@ -1,9 +1,8 @@
 namespace ConvivenciaPix.Domain.Events;
 
 public sealed record SpiDiscrepancyDetected(
-    string IdSystemA,
-    string IdSystemB,
-    string CorrelationSource,
+    string IdempotentId,
+    string MsgType,
     IReadOnlyList<DiscrepancyRecord> Discrepancies,
     DateTimeOffset DetectedAt);
 

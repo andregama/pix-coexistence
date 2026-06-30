@@ -11,8 +11,9 @@ public static class ApplicationServiceExtensions
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddScoped<IReceiveSpiRequestUseCase, ReceiveSpiRequestUseCase>();
-        services.AddScoped<ICorrelateMessagesUseCase, CorrelateMessagesUseCase>();
-        services.AddScoped<IReceiveSystemBSentUseCase, ReceiveSystemBSentUseCase>();
+        services.AddScoped<ICorrelateSystemAOutboundUseCase, CorrelateSystemAOutboundUseCase>();
+        services.AddScoped<ICorrelateSystemBOutboundUseCase, CorrelateSystemBOutboundUseCase>();
+        services.AddScoped<ICorrelateSystemAInboundUseCase, CorrelateSystemAInboundUseCase>();
         services.AddScoped<IPropagateResponseUseCase, PropagateResponseUseCase>();
         services.AddScoped<IPullStreamUseCase, PullStreamUseCase>();
         services.AddScoped<IAckStreamUseCase, AckStreamUseCase>();

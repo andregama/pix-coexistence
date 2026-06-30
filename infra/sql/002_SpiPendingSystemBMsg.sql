@@ -1,6 +1,8 @@
 -- Table: SpiPendingSystemBMsg
 -- Holds System B SPI requests that are waiting to be correlated with a System A
 -- message. The (Timestamp, Amount) composite index supports the heuristic match.
+-- NOTE: This table is dropped by 004_SpiRestructureSchema.sql (Phase 8). All
+-- CREATE INDEX statements below guard on table existence to stay idempotent.
 
 IF NOT EXISTS (
     SELECT 1 FROM sys.tables WHERE name = 'SpiPendingSystemBMsg' AND schema_id = SCHEMA_ID('dbo')
@@ -21,20 +23,22 @@ BEGIN
 END;
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = 'IX_SpiPendingSystemBMsg_IdSystemB' AND object_id = OBJECT_ID('dbo.SpiPendingSystemBMsg')
-)
+IF OBJECT_ID('dbo.SpiPendingSystemBMsg', 'U') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.indexes
+       WHERE name = 'IX_SpiPendingSystemBMsg_IdSystemB' AND object_id = OBJECT_ID('dbo.SpiPendingSystemBMsg')
+   )
 BEGIN
     CREATE UNIQUE NONCLUSTERED INDEX [IX_SpiPendingSystemBMsg_IdSystemB]
         ON [dbo].[SpiPendingSystemBMsg] ([IdSystemB] ASC);
 END;
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = 'IX_SpiPendingSystemBMsg_Timestamp_Amount' AND object_id = OBJECT_ID('dbo.SpiPendingSystemBMsg')
-)
+IF OBJECT_ID('dbo.SpiPendingSystemBMsg', 'U') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.indexes
+       WHERE name = 'IX_SpiPendingSystemBMsg_Timestamp_Amount' AND object_id = OBJECT_ID('dbo.SpiPendingSystemBMsg')
+   )
 BEGIN
     CREATE NONCLUSTERED INDEX [IX_SpiPendingSystemBMsg_Timestamp_Amount]
         ON [dbo].[SpiPendingSystemBMsg] ([Timestamp] ASC, [Amount] ASC);

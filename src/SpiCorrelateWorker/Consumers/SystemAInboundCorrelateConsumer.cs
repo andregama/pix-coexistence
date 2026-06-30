@@ -1,39 +1,38 @@
 using Confluent.Kafka;
-using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.CorrelateMessages;
-using Microsoft.Extensions.DependencyInjection;
 using ConvivenciaPix.Infrastructure.Messaging;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace ConvivenciaPix.SpiCorrelateWorker.Consumers;
 
-public sealed class SystemBSentConsumer : KafkaConsumerBase<string, string>
+public sealed class SystemAInboundCorrelateConsumer : KafkaConsumerBase<string, string>
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IReadOnlySet<string> _allowedTypes;
 
-    public SystemBSentConsumer(
+    public SystemAInboundCorrelateConsumer(
         IConfiguration configuration,
         IProducer<string, string> dlqProducer,
         IServiceScopeFactory scopeFactory,
+        IOptions<CorrelationOptions> options,
         ISpiMetrics metrics,
-        ILogger<SystemBSentConsumer> logger)
-        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemBRequests, logger, metrics)
+        ILogger<SystemAInboundCorrelateConsumer> logger)
+        : base(BuildConsumer(configuration), dlqProducer, Topics.SystemAInbound, logger, metrics)
     {
         _scopeFactory = scopeFactory;
+        _allowedTypes = options.Value.GetAllowedSet();
     }
 
     protected override async Task ProcessMessageAsync(
         ConsumeResult<string, string> result, CancellationToken cancellationToken)
     {
-        var envelope = JsonSerializer.Deserialize<KafkaEnvelope>(result.Message.Value)
-            ?? throw new InvalidOperationException("Failed to deserialize KafkaEnvelope from SystemBRequests");
-
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var useCase = scope.ServiceProvider.GetRequiredService<IReceiveSystemBSentUseCase>();
-        await useCase.ExecuteAsync(envelope, cancellationToken);
+        var useCase = scope.ServiceProvider.GetRequiredService<ICorrelateSystemAInboundUseCase>();
+        await useCase.ExecuteAsync(result.Message.Value, _allowedTypes, cancellationToken);
     }
 
     private static IConsumer<string, string> BuildConsumer(IConfiguration configuration) =>
@@ -41,7 +40,7 @@ public sealed class SystemBSentConsumer : KafkaConsumerBase<string, string>
         {
             BootstrapServers = configuration["Kafka:BootstrapServers"]
                 ?? throw new InvalidOperationException("Kafka:BootstrapServers is required."),
-            GroupId = "spi-correlate-systemb",
+            GroupId = "spi-correlate-systema-inbound",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         }).Build();

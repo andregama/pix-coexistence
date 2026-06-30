@@ -1,9 +1,8 @@
 namespace ConvivenciaPix.Application.DTOs;
 
 public sealed record SpiComparisonEventDto(
-    string IdSystemA,
-    string IdSystemB,
+    string IdempotentId,
+    string MsgType,
     string SystemAXml,
     string SystemBXml,
-    string CorrelationSource,
     DateTimeOffset OccurredAt);

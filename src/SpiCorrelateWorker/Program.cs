@@ -1,6 +1,7 @@
 using ConvivenciaPix.Application;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Metrics;
+using ConvivenciaPix.SpiCorrelateWorker;
 using ConvivenciaPix.SpiCorrelateWorker.Consumers;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Metrics;
@@ -8,10 +9,12 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.Configure<CorrelationOptions>(builder.Configuration.GetSection("Correlation"));
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
-builder.Services.AddHostedService<SystemBSentConsumer>();
-builder.Services.AddHostedService<SystemAResponseCorrelateConsumer>();
+builder.Services.AddHostedService<SystemAOutboundCorrelateConsumer>();
+builder.Services.AddHostedService<SystemBOutboundCorrelateConsumer>();
+builder.Services.AddHostedService<SystemAInboundCorrelateConsumer>();
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("spi-correlate-worker"))

@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace ConvivenciaPix.Infrastructure.Persistence.Configurations;
 
-public sealed class SpiSentMsgConfiguration : IEntityTypeConfiguration<SpiSentMsg>
+public sealed class SpiReceivedMsgConfiguration : IEntityTypeConfiguration<SpiReceivedMsg>
 {
-    public void Configure(EntityTypeBuilder<SpiSentMsg> builder)
+    public void Configure(EntityTypeBuilder<SpiReceivedMsg> builder)
     {
-        builder.ToTable("SpiSentMsg");
+        builder.ToTable("SpiReceivedMsg");
         builder.HasKey(x => x.IdempotentId);
 
         builder.Property(x => x.IdempotentId)
@@ -19,8 +19,7 @@ public sealed class SpiSentMsgConfiguration : IEntityTypeConfiguration<SpiSentMs
             .HasColumnType("VARCHAR(20)")
             .IsRequired();
 
-        builder.Property(x => x.MsgIdSystemA).HasColumnType("VARCHAR(255)");
-        builder.Property(x => x.MsgIdSystemB).HasColumnType("VARCHAR(255)");
+        builder.Property(x => x.MsgId).HasColumnType("VARCHAR(255)");
         builder.Property(x => x.XmlMsgSystemA).HasColumnType("NVARCHAR(MAX)");
         builder.Property(x => x.XmlMsgSystemB).HasColumnType("NVARCHAR(MAX)");
         builder.Property(x => x.OriginalMsgIdempotentId).HasColumnType("VARCHAR(255)");
@@ -29,16 +28,12 @@ public sealed class SpiSentMsgConfiguration : IEntityTypeConfiguration<SpiSentMs
         builder.Property(x => x.CreatedAt).HasColumnType("DATETIME2").IsRequired();
         builder.Property(x => x.UpdatedAt).HasColumnType("DATETIME2");
 
-        builder.HasIndex(x => x.MsgIdSystemA)
-            .HasDatabaseName("IX_SpiSentMsg_MsgIdSystemA")
-            .HasFilter("[MsgIdSystemA] IS NOT NULL");
-
-        builder.HasIndex(x => x.MsgIdSystemB)
-            .HasDatabaseName("IX_SpiSentMsg_MsgIdSystemB")
-            .HasFilter("[MsgIdSystemB] IS NOT NULL");
+        builder.HasIndex(x => x.MsgId)
+            .HasDatabaseName("IX_SpiReceivedMsg_MsgId")
+            .HasFilter("[MsgId] IS NOT NULL");
 
         builder.HasIndex(x => x.OriginalMsgIdempotentId)
-            .HasDatabaseName("IX_SpiSentMsg_OriginalMsgIdempotentId")
+            .HasDatabaseName("IX_SpiReceivedMsg_OriginalMsgIdempotentId")
             .HasFilter("[OriginalMsgIdempotentId] IS NOT NULL");
     }
 }

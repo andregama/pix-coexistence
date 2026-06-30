@@ -17,20 +17,25 @@ BEGIN
 END;
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = 'IX_SpiSentMsg_IdSystemA' AND object_id = OBJECT_ID('dbo.SpiSentMsg')
-)
+-- These indexes are only valid for the pre-Phase-8 schema (IdSystemA/IdSystemB columns).
+-- 004_SpiRestructureSchema.sql drops and recreates SpiSentMsg with IdempotentId as PK,
+-- so we guard index creation with a column-existence check to stay idempotent.
+IF COL_LENGTH('dbo.SpiSentMsg', 'IdSystemA') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.indexes
+       WHERE name = 'IX_SpiSentMsg_IdSystemA' AND object_id = OBJECT_ID('dbo.SpiSentMsg')
+   )
 BEGIN
     CREATE UNIQUE NONCLUSTERED INDEX [IX_SpiSentMsg_IdSystemA]
         ON [dbo].[SpiSentMsg] ([IdSystemA] ASC);
 END;
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = 'IX_SpiSentMsg_IdSystemB' AND object_id = OBJECT_ID('dbo.SpiSentMsg')
-)
+IF COL_LENGTH('dbo.SpiSentMsg', 'IdSystemB') IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.indexes
+       WHERE name = 'IX_SpiSentMsg_IdSystemB' AND object_id = OBJECT_ID('dbo.SpiSentMsg')
+   )
 BEGIN
     CREATE UNIQUE NONCLUSTERED INDEX [IX_SpiSentMsg_IdSystemB]
         ON [dbo].[SpiSentMsg] ([IdSystemB] ASC);

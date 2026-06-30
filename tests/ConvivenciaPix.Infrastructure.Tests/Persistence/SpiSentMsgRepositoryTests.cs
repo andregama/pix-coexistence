@@ -1,5 +1,4 @@
 using ConvivenciaPix.Domain.Entities;
-using ConvivenciaPix.Domain.ValueObjects;
 using ConvivenciaPix.Infrastructure.Persistence.Repositories;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
@@ -17,80 +16,67 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
     private SpiSentMsgRepository CreateRepo() => new(_fixture.CreateDbContext());
 
     [Fact]
-    public async Task AddAsync_ThenFindByIdSystemA_ReturnsEntity()
+    public async Task AddAsync_ThenFindByIdempotentId_ReturnsEntity()
     {
-        var msg = SpiSentMsg.Create(Uid(), Uid(), CorrelationSource.Orchestrator);
+        var idempotentId = Uid();
+        var msg = SpiSentMsg.Create(idempotentId, "pacs.008");
         var repo = CreateRepo();
 
         await repo.AddAsync(msg);
-        var found = await repo.FindByIdSystemAAsync(msg.IdSystemA);
+        var found = await repo.FindByIdempotentIdAsync(idempotentId);
 
         found.Should().NotBeNull();
-        found!.IdSystemA.Should().Be(msg.IdSystemA);
-        found.IdSystemB.Should().Be(msg.IdSystemB);
-        found.CorrelationSource.Should().Be(CorrelationSource.Orchestrator);
+        found!.IdempotentId.Should().Be(idempotentId);
+        found.MsgType.Should().Be("pacs.008");
     }
 
     [Fact]
-    public async Task FindByIdSystemA_UnknownId_ReturnsNull()
+    public async Task FindByIdempotentId_UnknownId_ReturnsNull()
     {
-        var result = await CreateRepo().FindByIdSystemAAsync(Uid());
+        var result = await CreateRepo().FindByIdempotentIdAsync(Uid());
         result.Should().BeNull();
     }
 
     [Fact]
-    public async Task FindByIdSystemB_KnownId_ReturnsEntity()
+    public async Task UpdateAsync_PersistsChanges()
     {
-        var msg = SpiSentMsg.Create(Uid(), Uid(), CorrelationSource.Heuristic);
+        var idempotentId = Uid();
+        var msg = SpiSentMsg.Create(idempotentId, "pacs.008");
         await CreateRepo().AddAsync(msg);
 
-        var found = await CreateRepo().FindByIdSystemBAsync(msg.IdSystemB);
-        found.Should().NotBeNull();
-        found!.IdSystemA.Should().Be(msg.IdSystemA);
-    }
+        var repo = CreateRepo();
+        var found = await repo.FindByIdempotentIdAsync(idempotentId);
+        found!.UpdateFromSystemA("MSG-A", "<xmlA/>", null);
+        await repo.UpdateAsync(found);
 
-    [Fact]
-    public async Task ExistsAsync_ExistingPair_ReturnsTrue()
-    {
-        var msg = SpiSentMsg.Create(Uid(), Uid(), CorrelationSource.Orchestrator);
-        await CreateRepo().AddAsync(msg);
-
-        var exists = await CreateRepo().ExistsAsync(msg.IdSystemA, msg.IdSystemB);
-        exists.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task ExistsAsync_UnknownPair_ReturnsFalse()
-    {
-        var exists = await CreateRepo().ExistsAsync(Uid(), Uid());
-        exists.Should().BeFalse();
+        var updated = await CreateRepo().FindByIdempotentIdAsync(idempotentId);
+        updated!.MsgIdSystemA.Should().Be("MSG-A");
+        updated.XmlMsgSystemA.Should().Be("<xmlA/>");
     }
 
     [Fact]
     public async Task DeleteOlderThan_RemovesStaleRows_LeavesRecentRows()
     {
-        // Insert a record and then directly update its CreatedAt to be old
         var staleId = Uid();
         var recentId = Uid();
-        var stale = SpiSentMsg.Create(staleId, Uid(), CorrelationSource.Orchestrator);
-        var recent = SpiSentMsg.Create(recentId, Uid(), CorrelationSource.Orchestrator);
+        var stale = SpiSentMsg.Create(staleId, "pacs.008");
+        var recent = SpiSentMsg.Create(recentId, "pacs.008");
 
         await using var ctx = _fixture.CreateDbContext();
         ctx.SpiSentMsgs.Add(stale);
         ctx.SpiSentMsgs.Add(recent);
         await ctx.SaveChangesAsync();
 
-        // Force stale record's CreatedAt to 40 days ago
         await ctx.Database.ExecuteSqlRawAsync(
-            "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdSystemA = {1}",
+            "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdempotentId = {1}",
             DateTime.UtcNow.AddDays(-40), staleId);
 
         var repo = new SpiSentMsgRepository(ctx);
         var deleted = await repo.DeleteOlderThanAsync(DateTime.UtcNow.AddDays(-30));
 
         deleted.Should().BeGreaterThanOrEqualTo(1);
-        (await repo.FindByIdSystemAAsync(staleId)).Should().BeNull();
-        (await repo.FindByIdSystemAAsync(recentId)).Should().NotBeNull();
+        (await repo.FindByIdempotentIdAsync(staleId)).Should().BeNull();
+        (await repo.FindByIdempotentIdAsync(recentId)).Should().NotBeNull();
     }
 
     private static string Uid() => Guid.NewGuid().ToString("N")[..16];
