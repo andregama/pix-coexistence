@@ -84,7 +84,7 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
 
     /// <summary>
     /// Simulates a Bacen inbound message (pacs.002) arriving for System A via CDC.
-    /// The correlate worker (SystemAInboundCorrelateConsumer) rewrites the response to System B's
+    /// The correlate worker (SystemACdcCorrelateConsumer) rewrites the response to System B's
     /// values from the stored pacs.008 A/B pair and publishes a ready event on spi.systemb.responses;
     /// the proxy worker (SystemBResponseProxyConsumer) signs it and enqueues it for System B to poll.
     /// A complete SpiSentMsg (System A + System B pacs.008) must be seeded first so the transform
@@ -107,10 +107,16 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
             await sentRepo.AddAsync(sent);
         }
 
-        // Simulate CDC event from SpiRecepApiBacen (Bacen → System A). OrgnlEndToEndId = System A's E2E.
+        // Simulate a Debezium CDC event from SpiRecepApiBacen (Bacen → System A) on the merged topic.
+        // source.table drives inbound-vs-outbound dispatch. OrgnlEndToEndId = System A's E2E.
         var xmlMsg = BuildPacs002Xml(bacenMsgId, systemAE2eId);
-        var cdc = new { after = new { XmlMsg = xmlMsg, Problem = (string?)null } };
-        await PublishToKafka("spi.systema.inbound", systemAE2eId, JsonSerializer.Serialize(cdc));
+        var cdc = new
+        {
+            op = "c",
+            source = new { table = "SpiRecepApiBacen" },
+            after = new { XmlMsg = xmlMsg, Problem = (string?)null }
+        };
+        await PublishToKafka("spi.systema.cdc", systemAE2eId, JsonSerializer.Serialize(cdc));
 
         // Wait for correlate + proxy workers to transform, sign, and enqueue.
         HttpResponseMessage? streamResponse = null;

@@ -5,11 +5,11 @@ public static class Topics
     public const string SystemBRequests = "spi.systemb.requests";
     public const string SystemBRequestsDlq = "spi.systemb.requests.dlq";
 
-    public const string SystemAOutbound = "spi.systema.outbound";
-    public const string SystemAOutboundDlq = "spi.systema.outbound.dlq";
-
-    public const string SystemAInbound = "spi.systema.inbound";
-    public const string SystemAInboundDlq = "spi.systema.inbound.dlq";
+    // Both System A tables (SpiRecepApiBacen inbound, SpiEnvioApiBacen outbound) are routed by
+    // Debezium to this single topic, matching the production configuration. The correlate worker
+    // dispatches by the CDC source.table. Overridable via Kafka:SystemACdcTopic.
+    public const string SystemACdc = "spi.systema.cdc";
+    public const string SystemACdcDlq = "spi.systema.cdc.dlq";
 
     public const string SystemBResponses = "spi.systemb.responses";
     public const string SystemBResponsesDlq = "spi.systemb.responses.dlq";

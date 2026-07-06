@@ -12,9 +12,8 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<CorrelationOptions>(builder.Configuration.GetSection("Correlation"));
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
-builder.Services.AddHostedService<SystemAOutboundCorrelateConsumer>();
+builder.Services.AddHostedService<SystemACdcCorrelateConsumer>();
 builder.Services.AddHostedService<SystemBOutboundCorrelateConsumer>();
-builder.Services.AddHostedService<SystemAInboundCorrelateConsumer>();
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("spi-correlate-worker"))

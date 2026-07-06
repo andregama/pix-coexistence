@@ -14,10 +14,10 @@ A .NET 8 coexistence layer that lets an internally-developed Pix system (**Syste
        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                         Kafka                                │
-│  spi.systemb.requests    spi.systema.outbound                │
-│  spi.systema.inbound     spi.systemb.responses               │
-│  spi.correlation.events  spi.comparison.events               │
-│  spi.discrepancies       (+ DLQ topics for each)             │
+│  spi.systemb.requests    spi.systema.cdc                     │
+│  spi.systemb.responses   spi.correlation.events              │
+│  spi.comparison.events   spi.discrepancies                   │
+│  (+ DLQ topics for each)                                     │
 └──────────────────────────────────────────────────────────────┘
        ▲                    │
        │                    ▼
@@ -42,8 +42,8 @@ A .NET 8 coexistence layer that lets an internally-developed Pix system (**Syste
 ### Request flow
 
 1. **System B** sends an SPI XML message to **spi-proxy-api** (mTLS, ISO 20022 pacs.008). The API validates, de-duplicates (idempotency via Redis), publishes the envelope to `spi.systemb.requests`, and immediately returns `201` with the `PI-ResourceId`(s).
-2. **Debezium** captures System A's two tables and streams CDC events to distinct topics: `SpiEnvioApiBacen` (messages **sent** to Bacen) → `spi.systema.outbound`, and `SpiRecepApiBacen` (messages **received** from Bacen) → `spi.systema.inbound`.
-3. **spi-correlate-worker** is the sole consumer of `spi.systemb.requests`, `spi.systema.outbound`, and `spi.systema.inbound`. It correlates by the shared Bacen **idempotency key** (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004):
+2. **Debezium** captures System A's two tables — `SpiEnvioApiBacen` (messages **sent** to Bacen) and `SpiRecepApiBacen` (messages **received** from Bacen) — and streams both into a single topic `spi.systema.cdc`, matching the production Debezium configuration.
+3. **spi-correlate-worker** consumes `spi.systemb.requests` and `spi.systema.cdc`, dispatching each CDC event to the inbound or outbound flow by its Debezium `source.table`. It correlates by the shared Bacen **idempotency key** (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004):
    - **Outbound** — assembles the `SpiSentMsg` System A/B pacs.008 pair. The first of the two to arrive creates the row; the second completes it.
    - **Inbound** — records System A's response in `SpiReceivedMsg`, looks up the correlated pacs.008 pair, and rewrites the System-A-specific fields to the values **System B expects** (config-driven rules — currently `EndToEndId` and the initiation form `LclInstrm/Prtry`, e.g. `DICT`→`MANU`). It then publishes a ready-for-System-B event to `spi.systemb.responses`.
 4. **spi-proxy-worker** consumes `spi.systemb.responses`, signs the already-transformed XML via the HSM abstraction, and enqueues it on a Redis-backed outbound stream.

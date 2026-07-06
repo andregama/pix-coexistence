@@ -119,25 +119,26 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 | RF-12 | Message type filtering via `Correlation:AllowedMessageTypes` | Phase 8 ✅ |
 | RF-13 | Response transformation to System B's expected values (config-driven rules) | Phase 9 ✅ |
 | RF-14 | Sent-side self-sufficiency: first-arrival creates `SpiSentMsg`, no external pre-insert | Phase 9 ✅ |
+| RF-15 | Consume a single merged System A CDC topic, dispatching by `source.table` (production-parity) | Phase 10 ✅ |
 
 ---
 
-## Architecture Summary (Current — Phase 9)
+## Architecture Summary (Current — Phase 10)
 
 ```
 System B ──► POST /api/v1/in/{ispb}/msgs ──► ReceiveSpiRequestUseCase ──► spi.systemb.requests
    ▲                                                                              │
    │ GET /api/v1/out/{ispb}/stream (long-poll pull + DELETE ack)                  │
-   │                                                                              ▼
-   │                        spi-correlate-worker  (sole consumer of the System A CDC topics
-   │                        and the System B request topic; correlates by shared IdempotentId)
-   │                          • Outbound: assemble SpiSentMsg A/B pacs.008 pair —
+   │                        spi-correlate-worker  (consumes the merged System A CDC topic +       │
+   │                        the System B request topic; dispatches by source.table; correlates    ▼
+   │                        by shared IdempotentId)
+   │                          • Outbound (SpiEnvioApiBacen): assemble SpiSentMsg A/B pacs.008 pair —
    │                            1st arrival CREATES the row, 2nd COMPLETES it ─► spi.correlation.events
-   │                          • Inbound: record SpiReceivedMsg, look up the pair, TRANSFORM the
-   │                            System A response → System B's expected values, then publish ─┐
-   │                                                                                          │
-System A ─► Bacen ─► SpiEnvioApiBacen ─► Debezium ─► spi.systema.outbound ─────────┐         │
-                  └─► SpiRecepApiBacen ─► Debezium ─► spi.systema.inbound ──────────┘         ▼
+   │                          • Inbound (SpiRecepApiBacen): record SpiReceivedMsg, look up the pair,
+   │                            TRANSFORM the System A response → System B's expected values, publish ─┐
+   │                                                                                                   │
+System A ─► Bacen ─► SpiEnvioApiBacen ─┐                                                              │
+                  └─► SpiRecepApiBacen ─┴─► Debezium ─► spi.systema.cdc ──► (source.table dispatch)   ▼
                                                                               │      spi.systemb.responses
                         ┌─────────────────────────────────────────────────────┤              │
                         ▼                                                       ▼              ▼
@@ -148,8 +149,8 @@ System A ─► Bacen ─► SpiEnvioApiBacen ─► Debezium ─► spi.systema
                                                                                         outbound stream
 ```
 
-> The proxy worker no longer consumes `spi.systema.inbound` directly. The correlate worker owns that
-> topic, performs the A→B field transformation, and hands the proxy worker a ready-to-sign payload on
+> The proxy worker no longer consumes System A CDC directly. The correlate worker owns the merged
+> `spi.systema.cdc` topic, performs the A→B field transformation, and hands the proxy worker a ready-to-sign payload on
 > `spi.systemb.responses`.
 
 ## Phase 8 — Schema Restructure & Dual-Flow Correlation ✅ Complete
@@ -200,7 +201,7 @@ System A ─► Bacen ─► SpiEnvioApiBacen ─► Debezium ─► spi.systema
 System A uses two separate tables for message processing, which Debezium streams as distinct CDC events to separate Kafka topics:
 
 #### Table A.1: `SpiRecepApiBacen` (Inbound - SPI to PSP)
-Stores all incoming messages/responses received from Bacen. Debezium streams these to **`spi.systema.inbound`**.
+Stores all incoming messages/responses received from Bacen. Debezium streams these to the merged **`spi.systema.cdc`** topic (identified downstream by `source.table = "SpiRecepApiBacen"`).
 * Schema:
   * `DtHrRecepcao` `datetime2` (Not Null)
   * `Ispb` `char(8)` (Not Null)
@@ -214,7 +215,7 @@ Stores all incoming messages/responses received from Bacen. Debezium streams the
   * `DtHrProcessamento` `datetime2` (Null)
 
 #### Table A.2: `SpiEnvioApiBacen` (Outbound - PSP to SPI)
-Stores all outgoing messages sent by System A to Bacen. Debezium streams these to **`spi.systema.outbound`**.
+Stores all outgoing messages sent by System A to Bacen. Debezium streams these to the merged **`spi.systema.cdc`** topic (identified downstream by `source.table = "SpiEnvioApiBacen"`).
 * Schema:
   * `DtHrEnvio` `datetime2` (Not Null)
   * `MessageId` `varchar(50)` (Not Null) — The `<MsgId>` field from the XML.
@@ -281,10 +282,10 @@ Used for incoming transactions initiated by Bacen. Rows are dynamically created 
 
 ### 4. Restructured Correlation & Proxy Workers Flow
 
-`SpiCorrelateWorker` will process CDC streams from System A (`spi.systema.inbound` and `spi.systema.outbound`) and System B (`spi.systemb.requests`).
+`SpiCorrelateWorker` processes the merged System A CDC stream (`spi.systema.cdc`, both tables — dispatched by `source.table`) and System B (`spi.systemb.requests`).
 
 #### A. Outbound Flow (Sent Messages)
-Uses System A's outbound CDC (`spi.systema.outbound`) mapped from `SpiEnvioApiBacen`.
+Uses System A's outbound CDC (`spi.systema.cdc`, `source.table = "SpiEnvioApiBacen"`).
 1. **Consume System A outbound message:**
    - Parse CDC event from `SpiEnvioApiBacen`.
    - Extract `EndToEndId` (use as `IdempotentId`) from `XmlMsg`.
@@ -302,7 +303,7 @@ Uses System A's outbound CDC (`spi.systema.outbound`) mapped from `SpiEnvioApiBa
    - When both `XmlMsgSystemA` and `XmlMsgSystemB` are populated, publish a correlation event to `spi.correlation.events` and a comparison event to `spi.comparison.events`.
 
 #### B. Inbound Flow (Received Messages)
-Uses System A's inbound CDC (`spi.systema.inbound`) mapped from `SpiRecepApiBacen`.
+Uses System A's inbound CDC (`spi.systema.cdc`, `source.table = "SpiRecepApiBacen"`).
 1. **Consume System A inbound message:**
    - Parse CDC event from `SpiRecepApiBacen`.
    - Verify that the message type is allowed.
@@ -318,7 +319,7 @@ Uses System A's inbound CDC (`spi.systema.inbound`) mapped from `SpiRecepApiBace
 
 #### C. Proxy Response Propagation Worker (`SpiProxyWorker`)
 System B pulls signed inbound responses/status reports from the proxy stream.
-* `SpiProxyWorker`'s consumer `SystemBResponseProxyConsumer` consumes the **`spi.systemb.responses`** topic — the ready-for-System-B event published by the correlate worker after it transforms System A's response (see Phase 9). It does **not** read the raw `spi.systema.inbound` CDC topic; the correlate worker is that topic's sole consumer.
+* `SpiProxyWorker`'s consumer `SystemBResponseProxyConsumer` consumes the **`spi.systemb.responses`** topic — the ready-for-System-B event published by the correlate worker after it transforms System A's response (see Phase 9). It does **not** read the raw `spi.systema.cdc` CDC topic; the correlate worker is that topic's sole consumer.
 * It signs the already-transformed XML using the HSM abstraction, enqueues it on the Redis-backed outbound stream for System B to pull, records the delivered XML on `SpiReceivedMsg` (System B side), and — once both sides are present — emits the correlation/comparison events.
 
 ---
@@ -334,7 +335,7 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 
 #### Manual Verification
 - Deploy the updated database scripts and spin up the docker-compose stack.
-- POST System B's pacs.008 to `/api/v1/in/{ispb}/msgs` and publish a matching System A outbound CDC event to `spi.systema.outbound` (same `EndToEndId`), then confirm one `SpiSentMsg` row reaches completion (both `XmlMsg*` columns populated). Publish the System A inbound pacs.002 CDC to `spi.systema.inbound` and confirm the transformed, signed response is delivered on the outbound stream.
+- POST System B's pacs.008 to `/api/v1/in/{ispb}/msgs` and publish a matching System A outbound CDC event to `spi.systema.cdc` (`source.table = "SpiEnvioApiBacen"`, same `EndToEndId`), then confirm one `SpiSentMsg` row reaches completion (both `XmlMsg*` columns populated). Publish the System A inbound pacs.002 CDC to `spi.systema.cdc` (`source.table = "SpiRecepApiBacen"`) and confirm the transformed, signed response is delivered on the outbound stream.
 
 ---
 
@@ -345,7 +346,7 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 ### Deliverables
 
 **Decoupling & transformation:**
-- `SpiProxyWorker` no longer consumes `spi.systema.inbound`. The correlate worker is that topic's sole consumer; it correlates + transforms and publishes a ready-for-System-B event to **`spi.systemb.responses`**, which `SpiProxyWorker` consumes. ✅
+- `SpiProxyWorker` no longer consumes System A CDC. The correlate worker is the sole consumer of the System A CDC topic; it correlates + transforms and publishes a ready-for-System-B event to **`spi.systemb.responses`**, which `SpiProxyWorker` consumes. ✅
 - `IInboundResponseTransformer` / `InboundResponseTransformer` — rewrites System-A-specific fields in the response to System B's values, computed from the stored `SpiSentMsg` A/B pacs.008 pair. Rules are config-driven (`ResponseTransformOptions`, `ResponseTransform:Rules`), seeded in code with **EndToEndId** and the **initiation form** (`LclInstrm/Prtry`, e.g. `DICT`→`MANU`); rules whose target node is absent in the response are skipped. ✅
 - `SystemBInboundReadyDto` carries the transformed XML on `spi.systemb.responses`. ✅
 - `CorrelateSystemAInboundUseCase` now correlates + transforms + publishes; if the pacs.008 pair is missing or incomplete it routes to the DLQ (rather than delivering an untransformed response). ✅
@@ -359,5 +360,18 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 - `InboundResponseTransformerTests`; `CorrelateSystemAInboundUseCaseTests`, `CorrelateSystemAOutboundUseCaseTests`, `CorrelateSystemBOutboundUseCaseTests`; updated `PropagateResponseUseCaseTests` and the integration round-trip (asserts the delivered response carries System B's `EndToEndId`). ✅
 
 *Delivered in commit `1ffdf0c`.*
+
+---
+
+## Phase 10 — Single Merged System A CDC Topic ✅ Complete
+
+**Goal:** Consume System A's CDC from a **single** Kafka topic (`spi.systema.cdc`) that carries both the `SpiRecepApiBacen` (inbound) and `SpiEnvioApiBacen` (outbound) tables, matching how Debezium is configured in production — replacing the previous two-topic / two-connector / two-consumer setup.
+
+### Deliverables
+
+- **Debezium:** replaced `systema-inbound.json` + `systema-outbound.json` with a single `systema-cdc.json` connector (`table.include.list` = both tables; `ByLogicalTableRouter` → `spi.systema.cdc`; full change envelope retained so `source` is available). ✅
+- **Topics:** `Topics.SystemACdc = "spi.systema.cdc"` (+ `.dlq`); removed the obsolete `SystemAInbound`/`SystemAOutbound` constants. Consumer topic is overridable via `Kafka:SystemACdcTopic`. ✅
+- **Dispatch:** new `CdcSource.ExtractTable` helper reads `source.table`; new `SystemACdcCorrelateConsumer` (single consumer, group `spi-correlate-systema-cdc`) routes each event to `CorrelateSystemAOutboundUseCase` (`SpiEnvioApiBacen`) or `CorrelateSystemAInboundUseCase` (`SpiRecepApiBacen`); unknown table / tombstone is logged and skipped. The two old dedicated consumers were removed. The use cases and mappers are unchanged. ✅
+- **Infra/tests:** docker-compose provisions `spi.systema.cdc` (+ `.dlq`); the integration fixture registers the single consumer, and the round-trip publishes a full envelope with `source.table`. New `CdcSourceTests`. ✅
 
 

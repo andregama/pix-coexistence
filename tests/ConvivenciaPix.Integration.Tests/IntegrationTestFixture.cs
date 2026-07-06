@@ -98,9 +98,8 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
             });
 
             // Register workers as hosted services so they run during the test
-            services.AddHostedService<SystemAOutboundCorrelateConsumer>();
+            services.AddHostedService<SystemACdcCorrelateConsumer>();
             services.AddHostedService<SystemBOutboundCorrelateConsumer>();
-            services.AddHostedService<SystemAInboundCorrelateConsumer>();
             services.AddHostedService<SystemBResponseProxyConsumer>();
         });
     }
