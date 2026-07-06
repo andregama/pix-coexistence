@@ -53,6 +53,9 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<IXmlSigningService, XmlSigningService>();
         services.AddSingleton<ISpiXmlParser, SpiXmlParser>();
 
+        services.Configure<ResponseTransformOptions>(configuration.GetSection("ResponseTransform"));
+        services.AddSingleton<IInboundResponseTransformer, InboundResponseTransformer>();
+
         AddHsmServices(services, configuration, environment);
         AddCertificateValidator(services, configuration, environment);
         AddKafkaProducer(services);

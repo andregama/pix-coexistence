@@ -101,7 +101,7 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
             services.AddHostedService<SystemAOutboundCorrelateConsumer>();
             services.AddHostedService<SystemBOutboundCorrelateConsumer>();
             services.AddHostedService<SystemAInboundCorrelateConsumer>();
-            services.AddHostedService<SystemAResponseProxyConsumer>();
+            services.AddHostedService<SystemBResponseProxyConsumer>();
         });
     }
 }

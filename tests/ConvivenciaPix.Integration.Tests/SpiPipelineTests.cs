@@ -1,5 +1,8 @@
 using Confluent.Kafka;
+using ConvivenciaPix.Domain.Entities;
+using ConvivenciaPix.Domain.Repositories;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using StackExchange.Redis;
 using System.Net;
 using System.Net.Http.Headers;
@@ -81,24 +84,35 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
 
     /// <summary>
     /// Simulates a Bacen inbound message (pacs.002) arriving for System A via CDC.
-    /// The proxy worker (SystemAInboundCorrelateConsumer + PropagateResponseUseCase)
-    /// signs it and enqueues it for System B to poll from the outbound stream.
-    /// No prior System B POST is required — PropagateResponseUseCase works directly
-    /// from the CDC event, upserts SpiReceivedMsg, and enqueues the signed response.
+    /// The correlate worker (SystemAInboundCorrelateConsumer) rewrites the response to System B's
+    /// values from the stored pacs.008 A/B pair and publishes a ready event on spi.systemb.responses;
+    /// the proxy worker (SystemBResponseProxyConsumer) signs it and enqueues it for System B to poll.
+    /// A complete SpiSentMsg (System A + System B pacs.008) must be seeded first so the transform
+    /// can compute B's EndToEndId — otherwise the response is routed to the DLQ.
     /// </summary>
     [Fact]
-    public async Task FullRoundTrip_InboundCdcThenStreamGetsSignedResponse()
+    public async Task FullRoundTrip_InboundCdcThenStreamGetsTransformedSignedResponse()
     {
-        var originalE2eId = NewId();
-        var bacenMsgId = "BACEN-" + originalE2eId;
+        var systemAE2eId = NewId();
+        var systemBE2eId = NewId();
+        var bacenMsgId = "BACEN-" + systemAE2eId;
 
-        // Simulate CDC event from SpiRecepApiBacen (Bacen → System A)
-        var xmlMsg = BuildPacs002Xml(bacenMsgId, originalE2eId);
+        // Seed the correlated pacs.008 A/B pair: System A used systemAE2eId, System B used systemBE2eId.
+        using (var scope = _fixture.Services.CreateScope())
+        {
+            var sentRepo = scope.ServiceProvider.GetRequiredService<ISpiSentMsgRepository>();
+            var sent = SpiSentMsg.Create(systemAE2eId, "pacs.008");
+            sent.UpdateFromSystemA("MSG-A-" + systemAE2eId, BuildPacs008Xml("MSG-A", systemAE2eId), null);
+            sent.UpdateFromSystemB("MSG-B-" + systemBE2eId, BuildPacs008Xml("MSG-B", systemBE2eId), null);
+            await sentRepo.AddAsync(sent);
+        }
+
+        // Simulate CDC event from SpiRecepApiBacen (Bacen → System A). OrgnlEndToEndId = System A's E2E.
+        var xmlMsg = BuildPacs002Xml(bacenMsgId, systemAE2eId);
         var cdc = new { after = new { XmlMsg = xmlMsg, Problem = (string?)null } };
-        await PublishToKafka("spi.systema.inbound", originalE2eId, JsonSerializer.Serialize(cdc));
+        await PublishToKafka("spi.systema.inbound", systemAE2eId, JsonSerializer.Serialize(cdc));
 
-        // Wait for proxy worker to sign and enqueue.
-        // Give ~30s: CorrelateSystemAInbound + PropagateResponse consumers both run in parallel.
+        // Wait for correlate + proxy workers to transform, sign, and enqueue.
         HttpResponseMessage? streamResponse = null;
         for (var attempt = 0; attempt < 15; attempt++)
         {
@@ -113,6 +127,9 @@ public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
         var body = await streamResponse.Content.ReadAsStringAsync();
         body.Should().Contain(bacenMsgId);
         body.Should().Contain("<Signature");
+        // Proof of transformation: the OrgnlEndToEndId was rewritten from System A's to System B's E2E.
+        body.Should().Contain(systemBE2eId);
+        body.Should().Contain($"<OrgnlEndToEndId>{systemBE2eId}</OrgnlEndToEndId>");
     }
 
     private async Task PublishToKafka(string topic, string key, string value)

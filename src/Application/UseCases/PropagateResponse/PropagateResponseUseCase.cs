@@ -1,7 +1,6 @@
 using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
-using ConvivenciaPix.Application.Mappers;
 using ConvivenciaPix.Application.Tracing;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Repositories;
@@ -24,7 +23,6 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
     private readonly IHsmService _hsmService;
     private readonly IXmlSigningService _xmlSigningService;
     private readonly IKafkaPublisher _publisher;
-    private readonly ISpiXmlParser _xmlParser;
     private readonly ISpiMetrics _metrics;
     private readonly ILogger<PropagateResponseUseCase> _logger;
 
@@ -34,7 +32,6 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         IHsmService hsmService,
         IXmlSigningService xmlSigningService,
         IKafkaPublisher publisher,
-        ISpiXmlParser xmlParser,
         ISpiMetrics metrics,
         ILogger<PropagateResponseUseCase> logger)
     {
@@ -43,60 +40,52 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         _hsmService = hsmService;
         _xmlSigningService = xmlSigningService;
         _publisher = publisher;
-        _xmlParser = xmlParser;
         _metrics = metrics;
         _logger = logger;
     }
 
-    public async Task ExecuteAsync(string rawCdcJson, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(SystemBInboundReadyDto ready, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
 
-        var mapped = SystemAInboundMapper.Map(rawCdcJson);
-        var msgType = _xmlParser.ExtractMessageType(mapped.XmlMsg);
-        var idempotentId = _xmlParser.ExtractIdempotentId(mapped.XmlMsg, msgType);
-
-        // Sign System A's XML so it can be delivered to System B
+        // The correlate worker has already transformed the response to System B's expectations;
+        // here we only sign it, enqueue it for System B to pull, and record the delivered XML.
         string signedXml;
         using (SpiActivitySource.StartProxyActivity("proxy.xml-sign"))
         {
             var cert = await _hsmService.GetSigningCertificateAsync(cancellationToken);
             signedXml = await _xmlSigningService.SignAsync(
-                XDocument.Parse(mapped.XmlMsg), cert);
+                XDocument.Parse(ready.TransformedXml), cert);
         }
 
-        // Enqueue signed XML onto the outbound stream for System B to pull
         var piResourceId = ResourceIdGenerator.Generate();
         using (SpiActivitySource.StartProxyActivity("proxy.outbound-enqueue"))
         {
             await _outboundStream.EnqueueAsync(piResourceId, signedXml, cancellationToken);
         }
 
-        // Upsert SpiReceivedMsg with the signed XML (handles race with CorrelateSystemAInboundUseCase)
         SpiReceivedMsg msg;
         using (SpiActivitySource.StartProxyActivity("proxy.db-upsert"))
         {
-            msg = await UpsertReceivedMsgAsync(idempotentId, msgType, mapped, signedXml, cancellationToken);
+            msg = await UpsertReceivedMsgAsync(ready, signedXml, cancellationToken);
         }
 
         _metrics.RecordProxyResponseLatency(sw.Elapsed.TotalMilliseconds);
         _logger.LogInformation(
             "Signed response enqueued. IdempotentId={IdempotentId} MsgType={MsgType} PiResourceId={PiResourceId}",
-            idempotentId, msgType, piResourceId);
+            ready.IdempotentId, ready.MsgType, piResourceId);
 
         if (msg.IsComplete)
             await PublishEventsAsync(msg, cancellationToken);
     }
 
     private async Task<SpiReceivedMsg> UpsertReceivedMsgAsync(
-        string idempotentId, string msgType,
-        SystemAInboundMapper.Result mapped, string signedXml,
-        CancellationToken ct)
+        SystemBInboundReadyDto ready, string signedXml, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repo = scope.ServiceProvider.GetRequiredService<ISpiReceivedMsgRepository>();
 
-        var existing = await repo.FindByIdempotentIdAsync(idempotentId, ct);
+        var existing = await repo.FindByIdempotentIdAsync(ready.IdempotentId, ct);
         if (existing is not null)
         {
             existing.SetSystemBXml(signedXml);
@@ -104,9 +93,10 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
             return existing;
         }
 
-        var originalId = _xmlParser.ExtractOriginalIdempotentId(mapped.XmlMsg, msgType);
+        // Defensive: the correlate worker normally writes the System A side before publishing the
+        // ready event, so the row usually exists. Create it here only if that ordering was missed.
         var created = SpiReceivedMsg.CreateFromSystemB(
-            idempotentId, msgType, msgId: null, signedXml, errorCode: null, originalId);
+            ready.IdempotentId, ready.MsgType, msgId: null, signedXml, errorCode: null);
         await repo.AddAsync(created, ct);
         return created;
     }

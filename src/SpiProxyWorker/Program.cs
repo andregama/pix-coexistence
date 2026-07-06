@@ -10,7 +10,7 @@ using OpenTelemetry.Trace;
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
-builder.Services.AddHostedService<SystemAResponseProxyConsumer>();
+builder.Services.AddHostedService<SystemBResponseProxyConsumer>();
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("spi-proxy-worker"))

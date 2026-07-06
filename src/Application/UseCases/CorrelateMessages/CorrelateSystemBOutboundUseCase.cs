@@ -47,19 +47,26 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
         try { msgId = _xmlParser.ExtractMessageId(rawXml); }
         catch { /* non-critical */ }
 
+        // First-arrival create-if-missing: whichever of System A/B outbound arrives first creates
+        // the shared row (keyed by IdempotentId); the second side updates it. Mirrors the
+        // SpiReceivedMsg "first arrival creates the row" pattern.
         var msg = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
+        var isNew = msg is null;
         if (msg is null)
-            throw new InvalidOperationException(
-                $"SpiSentMsg not found for IdempotentId={idempotentId} MsgType={msgType}. Routing to DLQ.");
+            msg = SpiSentMsg.Create(idempotentId, msgType);
 
         msg.UpdateFromSystemB(msgId, rawXml, null);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 
-        await _sentMsgRepo.UpdateAsync(msg, ct);
+        if (isNew)
+            await _sentMsgRepo.AddAsync(msg, ct);
+        else
+            await _sentMsgRepo.UpdateAsync(msg, ct);
 
         _logger.LogInformation(
-            "SystemB outbound correlated. IdempotentId={Id} MsgType={Type}", idempotentId, msgType);
+            "SystemB outbound correlated. IdempotentId={Id} MsgType={Type} Created={Created}",
+            idempotentId, msgType, isNew);
 
         if (msg.IsComplete)
             await PublishEventsAsync(msg, ct);

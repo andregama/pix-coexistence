@@ -1,24 +1,40 @@
+using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.Mappers;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Repositories;
 using Microsoft.Extensions.Logging;
+using System.Text;
+using System.Text.Json;
 
 namespace ConvivenciaPix.Application.UseCases.CorrelateMessages;
 
 public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUseCase
 {
+    // Matches Topics.SystemBResponses; kept as a literal because the Application layer
+    // does not reference Infrastructure (which owns the Topics registry).
+    private const string SystemBResponsesTopic = "spi.systemb.responses";
+
     private readonly ISpiReceivedMsgRepository _receivedMsgRepo;
+    private readonly ISpiSentMsgRepository _sentMsgRepo;
     private readonly ISpiXmlParser _xmlParser;
+    private readonly IInboundResponseTransformer _transformer;
+    private readonly IKafkaPublisher _publisher;
     private readonly ILogger<CorrelateSystemAInboundUseCase> _logger;
 
     public CorrelateSystemAInboundUseCase(
         ISpiReceivedMsgRepository receivedMsgRepo,
+        ISpiSentMsgRepository sentMsgRepo,
         ISpiXmlParser xmlParser,
+        IInboundResponseTransformer transformer,
+        IKafkaPublisher publisher,
         ILogger<CorrelateSystemAInboundUseCase> logger)
     {
         _receivedMsgRepo = receivedMsgRepo;
+        _sentMsgRepo = sentMsgRepo;
         _xmlParser = xmlParser;
+        _transformer = transformer;
+        _publisher = publisher;
         _logger = logger;
     }
 
@@ -53,7 +69,33 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             await _receivedMsgRepo.UpdateAsync(existing, ct);
         }
 
+        // Correlate against the stored pacs.008 A/B pair so the response can be rewritten to the
+        // values System B expects. Missing/incomplete correlation -> DLQ (via KafkaConsumerBase).
+        var sent = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
+        if (sent is null || !sent.IsComplete)
+            throw new InvalidOperationException(
+                $"SpiSentMsg not found or incomplete for IdempotentId={idempotentId} MsgType={msgType}. " +
+                "Cannot transform response for System B. Routing to DLQ.");
+
+        var transformedXml = _transformer.Transform(mapped.XmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
+
+        var readyDto = new SystemBInboundReadyDto(
+            IdempotentId: idempotentId,
+            MsgType: msgType,
+            TransformedXml: transformedXml,
+            OccurredAt: DateTimeOffset.UtcNow);
+
+        var envelope = new KafkaEnvelope(
+            MessageId: idempotentId,
+            PayloadBase64: Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(JsonSerializer.Serialize(readyDto))),
+            Timestamp: DateTimeOffset.UtcNow,
+            CorrelationId: idempotentId);
+
+        await _publisher.PublishAsync(SystemBResponsesTopic, envelope, ct);
+
         _logger.LogInformation(
-            "SystemA inbound correlated. IdempotentId={Id} MsgType={Type}", idempotentId, msgType);
+            "SystemA inbound correlated and transformed for System B. IdempotentId={Id} MsgType={Type}",
+            idempotentId, msgType);
     }
 }
