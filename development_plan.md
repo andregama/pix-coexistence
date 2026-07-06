@@ -106,49 +106,57 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 | ID | Requirement | Phase |
 |:---|:---|:---|
 | RF-01 | Bacen SPI endpoint emulation with mTLS and XML signatures | Phase 3 ✅ |
-| RF-02 | Hybrid correlation (Orchestrator + Heuristic fallback) | Phase 2 ✅ |
+| RF-02 | ~~Hybrid correlation (Orchestrator + Heuristic)~~ → Direct Bacen idempotency-key correlation | Phase 8 ✅ |
 | RF-03 | Idempotency via `MessageId` | Phase 2 ✅ |
 | RF-04 | Error propagation from System A to System B | Phase 2 ✅ |
-| RF-05 | `CorrelationSource` logging and storage | Phase 2 ✅ |
+| RF-05 | ~~`CorrelationSource` logging~~ (removed with Orchestrator/Heuristic in Phase 8) | — |
 | RF-06 | Database indexing on both system IDs | Phase 2 ✅ |
 | RF-07 | Dead Letter Queues for all Kafka consumers | Phase 1 ✅ |
 | RF-08 | Comparison reporting with discrepancy logging | Phase 4 ✅ |
 | RF-09 | Response caching + configurable request timeout | Phase 2 ✅ |
-| RF-10 | Performance: Sub-millisecond signaling | Phase 5 ✅ |
-| RF-11 | Dual-flow correlation (outbound `SpiSentMsg` + inbound `SpiReceivedMsg`) | Phase 8 🏗️ |
-| RF-12 | Message type filtering via `Correlation:AllowedMessageTypes` | Phase 8 🏗️ |
+| RF-10 | Performance: pull-based outbound stream (Bacen SPI ICOM §2.2.2) | Phase 5 ✅ |
+| RF-11 | Dual-flow correlation (outbound `SpiSentMsg` + inbound `SpiReceivedMsg`) | Phase 8 ✅ |
+| RF-12 | Message type filtering via `Correlation:AllowedMessageTypes` | Phase 8 ✅ |
+| RF-13 | Response transformation to System B's expected values (config-driven rules) | Phase 9 ✅ |
+| RF-14 | Sent-side self-sufficiency: first-arrival creates `SpiSentMsg`, no external pre-insert | Phase 9 ✅ |
 
 ---
 
-## Architecture Summary (Target — Phase 8+)
+## Architecture Summary (Current — Phase 9)
 
 ```
-System B ──► POST /api/spi/messages ──► ReceiveSpiRequestUseCase
-                     │                         │
-                     │ wait (Redis Pub/Sub)    ▼
-                     │              spi.systemb.requests (Kafka)
-                     │                         │
-                     │            ┌────────────┴────────────────────────┐
-                     │            ▼ (outbound)                          ▼ (inbound)
-                     │  CorrelateSystemAOutboundUseCase    CorrelateSystemAInboundUseCase
-                     │  (EndToEndId → SpiSentMsg)          (EndToEndId → SpiReceivedMsg)
-                     │            │                                      │
-                     │            ▼                                      ▼
-System A ──► Bacen ──► SpiEnvioApiBacen ──► Debezium ──► spi.systema.outbound (Kafka)
-                    └──► SpiRecepApiBacen ──► Debezium ──► spi.systema.inbound (Kafka)
-                                                                         │
-                                                         ┌───────────────┴───────────────┐
-                                                         ▼                               ▼
-                                            PropagateResponseUseCase            SpiComparisonEngine
-                                            (Sign XML + Redis Publish)          (Detect Discrepancy)
-                                                         │                               │
-                                                   response:{B}                    SpiDiscrepancy (DB)
-                                                   (Unblocks API)
+System B ──► POST /api/v1/in/{ispb}/msgs ──► ReceiveSpiRequestUseCase ──► spi.systemb.requests
+   ▲                                                                              │
+   │ GET /api/v1/out/{ispb}/stream (long-poll pull + DELETE ack)                  │
+   │                                                                              ▼
+   │                        spi-correlate-worker  (sole consumer of the System A CDC topics
+   │                        and the System B request topic; correlates by shared IdempotentId)
+   │                          • Outbound: assemble SpiSentMsg A/B pacs.008 pair —
+   │                            1st arrival CREATES the row, 2nd COMPLETES it ─► spi.correlation.events
+   │                          • Inbound: record SpiReceivedMsg, look up the pair, TRANSFORM the
+   │                            System A response → System B's expected values, then publish ─┐
+   │                                                                                          │
+System A ─► Bacen ─► SpiEnvioApiBacen ─► Debezium ─► spi.systema.outbound ─────────┐         │
+                  └─► SpiRecepApiBacen ─► Debezium ─► spi.systema.inbound ──────────┘         ▼
+                                                                              │      spi.systemb.responses
+                        ┌─────────────────────────────────────────────────────┤              │
+                        ▼                                                       ▼              ▼
+              spi-comparison-engine                                   spi-comparison-   spi-proxy-worker
+              (consume comparison events →                            engine            consume responses →
+               detect field diffs → SpiDiscrepancy DB)                                  sign transformed XML →
+                                                                                        enqueue on Redis
+                                                                                        outbound stream
 ```
 
-## Phase 8 — Schema Restructure & Dual-Flow Correlation 🏗️ Pending
+> The proxy worker no longer consumes `spi.systema.inbound` directly. The correlate worker owns that
+> topic, performs the A→B field transformation, and hands the proxy worker a ready-to-sign payload on
+> `spi.systemb.responses`.
+
+## Phase 8 — Schema Restructure & Dual-Flow Correlation ✅ Complete
 
 **Goal:** Restructure the correlation database schema and update the workers to support both Sent (outbound) and Received (inbound) messages, filter by message types, and optimize the correlation flow using direct idempotent identifiers mapped from System A's distinct tables (`SpiRecepApiBacen` and `SpiEnvioApiBacen`).
+
+*Delivered in commit `cdc9195`: the Orchestrator + Heuristic correlation (and `IOrchestratorClient`, `CorrelationSource`, `SpiPendingSystemBMsg`) was removed in favour of direct Bacen idempotency-key lookup; `SpiSentMsg` and `SpiReceivedMsg` were split; `spi.systema.outbound` / `spi.systema.inbound` topics replaced `spi.systema.responses`.*
 
 ### Deliverables
 
@@ -224,7 +232,7 @@ Stores all outgoing messages sent by System A to Bacen. Debezium streams these t
 Based on the distinct lifecycles of inbound and outbound transactions, the coexistence layer (`DB_COEXISTENCE`) will use two separate tables:
 
 #### Table B.1: `SpiSentMsg` (Outbound/Sent - PSP to SPI)
-Used for transactions initiated by the bank (PSP). The external Orchestrator pre-inserts a record into this table before either system generates their respective XML.
+Used for transactions initiated by the bank (PSP). The row is created by whichever of System A / System B outbound arrives first and completed by the other (first-arrival-creates — see Phase 9). *(The original design assumed an external Orchestrator pre-insert; that component was never implemented and is no longer required.)*
 * Schema:
   * **`IdempotentId`** `VARCHAR(255)` (Primary Key): Stores the `EndToEndId` of the transfer (e.g. for `pacs.008`, `pacs.004`, and `pacs.002`).
   * **`MsgIdSystemA`** `VARCHAR(255)` (Nullable, Indexed): Mapped from `MessageId` in `SpiEnvioApiBacen`.
@@ -234,7 +242,7 @@ Used for transactions initiated by the bank (PSP). The external Orchestrator pre
   * **`OriginalMsgIdempotentId`** `VARCHAR(255)` (Nullable, Indexed): Mapped from return transactions (`pacs.004`) pointing back to the original transfer's `EndToEndId`.
   * **`SystemAErrorCode`** `VARCHAR(MAX)` (Nullable): Mapped from `Problem` in `SpiEnvioApiBacen`.
   * **`SystemBErrorCode`** `VARCHAR(MAX)` (Nullable): Mapped from System B's error/failures.
-  * **`CreatedAt`** `DATETIME2` (Not Null): Pre-populated when the Orchestrator initiates the record.
+  * **`CreatedAt`** `DATETIME2` (Not Null): Set when the first side (System A or System B outbound) creates the row.
   * **`UpdatedAt`** `DATETIME2` (Nullable): Set on updates.
 
 #### Table B.2: `SpiReceivedMsg` (Inbound/Received - SPI to PSP)
@@ -250,7 +258,6 @@ Used for incoming transactions initiated by Bacen. Rows are dynamically created 
   * **`OriginalMsgIdempotentId`** `VARCHAR(255)` (Nullable, Indexed)
   * **`SystemAErrorCode`** `VARCHAR(MAX)` (Nullable): Mapped from `Problem` in `SpiRecepApiBacen`.
   * **`SystemBErrorCode`** `VARCHAR(MAX)` (Nullable)
-  * **`CorrelationSource`** `VARCHAR(50)` (Not Null): e.g. `"DirectEndToEnd"`, `"Orchestrator"`, `"Heuristic"`.
   * **`CreatedAt`** `DATETIME2` (Not Null): Set when the first message is inserted.
   * **`UpdatedAt`** `DATETIME2` (Nullable): Set on matches.
 
@@ -284,15 +291,15 @@ Uses System A's outbound CDC (`spi.systema.outbound`) mapped from `SpiEnvioApiBa
    - Verify that the message type is in `AllowedMessageTypes`.
    - Query `SpiSentMsg` by `IdempotentId`.
    - If found: update `MsgIdSystemA = MessageId`, `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, and `UpdatedAt = UtcNow`.
-   - If not found: log a warning and retry or route to DLQ (as the Orchestrator is expected to have pre-inserted the row).
+   - If not found: **create** the row (`SpiSentMsg.Create`) and set the System A side. First-arrival-creates: the System B side completes it when it arrives. (No external Orchestrator pre-insert is required — see Phase 9.)
 2. **Consume System B message (`spi.systemb.requests`):**
    - Extract `EndToEndId` (use as `IdempotentId`), `MsgId`, `XmlMsg`, and `ErrorCode` from the Kafka envelope.
    - Verify that the message type is in `AllowedMessageTypes`.
    - Query `SpiSentMsg` by `IdempotentId`.
    - If found: update `MsgIdSystemB = MsgId`, `XmlMsgSystemB = XmlMsg`, `SystemBErrorCode = ErrorCode`, and `UpdatedAt = UtcNow`.
-   - If not found: log a warning and retry or route to DLQ.
+   - If not found: **create** the row and set the System B side (first-arrival-creates; the System A side completes it later).
 3. **Completion:**
-   - When both `XmlMsgSystemA` and `XmlMsgSystemB` are populated, publish a correlation event to `spi.correlation.events`.
+   - When both `XmlMsgSystemA` and `XmlMsgSystemB` are populated, publish a correlation event to `spi.correlation.events` and a comparison event to `spi.comparison.events`.
 
 #### B. Inbound Flow (Received Messages)
 Uses System A's inbound CDC (`spi.systema.inbound`) mapped from `SpiRecepApiBacen`.
@@ -301,21 +308,18 @@ Uses System A's inbound CDC (`spi.systema.inbound`) mapped from `SpiRecepApiBace
    - Verify that the message type is allowed.
    - Extract `EndToEndId` (use as `IdempotentId`), `MsgId` (extracted from `<AppHdr>/<MsgId>` inside `XmlMsg`), `XmlMsg`, and `Problem`.
    - Query `SpiReceivedMsg` by `IdempotentId`.
-   - If not exists: Insert a new row setting `IdempotentId`, `MsgId` (first-wins), `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, `CorrelationSource = "DirectEndToEnd"`, and `CreatedAt = UtcNow`.
+   - If not exists: Insert a new row setting `IdempotentId`, `MsgId` (first-wins), `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, and `CreatedAt = UtcNow`.
    - If exists: Update `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, and `UpdatedAt = UtcNow` (do **not** overwrite `MsgId` if already set — first-wins).
-2. **Consume System B inbound message:**
-   - Verify that the message type is allowed.
-   - Extract `EndToEndId` (use as `IdempotentId`), `MsgId`, `XmlMsg`, and `ErrorCode`.
-   - Query `SpiReceivedMsg` by `IdempotentId`.
-   - If not exists (System B processed it first): Insert a new row setting `IdempotentId`, `MsgId` (first-wins), `XmlMsgSystemB = XmlMsg`, `SystemBErrorCode = ErrorCode`, `CorrelationSource = "DirectEndToEnd"`, and `CreatedAt = UtcNow`.
-   - If exists: Update `XmlMsgSystemB = XmlMsg`, `SystemBErrorCode = ErrorCode`, and `UpdatedAt = UtcNow` (do **not** overwrite `MsgId` if already set — first-wins).
+   - Look up the correlated `SpiSentMsg` pacs.008 pair, **transform** the response to System B's expected values (see Phase 9), and publish a ready-for-System-B event to `spi.systemb.responses`. If the pair is missing/incomplete, route to the DLQ.
+2. **System B side (written by `SpiProxyWorker`, not a separate CDC consumer):**
+   - After the proxy worker signs the transformed response and enqueues it for System B, it records the delivered payload on the same `SpiReceivedMsg` row: `XmlMsgSystemB = signed XML`, `UpdatedAt = UtcNow` (creating the row defensively only if the System A side has not landed yet).
 3. **Completion:**
-   - When both `XmlMsgSystemA` and `XmlMsgSystemB` are populated, publish the correlation event to `spi.correlation.events`.
+   - When both `XmlMsgSystemA` and `XmlMsgSystemB` are populated, publish the correlation event to `spi.correlation.events` and the comparison event to `spi.comparison.events`.
 
 #### C. Proxy Response Propagation Worker (`SpiProxyWorker`)
 System B pulls signed inbound responses/status reports from the proxy stream.
-* `SpiProxyWorker`'s consumer `SystemAResponseProxyConsumer` must be updated to consume from the **`spi.systema.inbound`** topic (which maps System A's received messages from `SpiRecepApiBacen`).
-* It will sign the received System A XML using the HSM abstraction and enqueue it on the outbound stream so System B can pull it.
+* `SpiProxyWorker`'s consumer `SystemBResponseProxyConsumer` consumes the **`spi.systemb.responses`** topic — the ready-for-System-B event published by the correlate worker after it transforms System A's response (see Phase 9). It does **not** read the raw `spi.systema.inbound` CDC topic; the correlate worker is that topic's sole consumer.
+* It signs the already-transformed XML using the HSM abstraction, enqueues it on the Redis-backed outbound stream for System B to pull, records the delivered XML on `SpiReceivedMsg` (System B side), and — once both sides are present — emits the correlation/comparison events.
 
 ---
 
@@ -330,6 +334,30 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 
 #### Manual Verification
 - Deploy the updated database scripts and spin up the docker-compose stack.
-- Trigger the orchestrator mock to register a sent transfer, then publish mock messages for System A (to `spi.systema.inbound` and `spi.systema.outbound` respectively) and System B to Kafka, validating that the correlation worker matches them and updates the new DB schema columns correctly.
+- POST System B's pacs.008 to `/api/v1/in/{ispb}/msgs` and publish a matching System A outbound CDC event to `spi.systema.outbound` (same `EndToEndId`), then confirm one `SpiSentMsg` row reaches completion (both `XmlMsg*` columns populated). Publish the System A inbound pacs.002 CDC to `spi.systema.inbound` and confirm the transformed, signed response is delivered on the outbound stream.
+
+---
+
+## Phase 9 — Response Transformation & Correlation Self-Sufficiency ✅ Complete
+
+**Goal:** Stop the proxy worker from consuming raw CDC, transform Bacen responses to System B's expected values, and make the sent-side correlation self-sufficient (no external Orchestrator).
+
+### Deliverables
+
+**Decoupling & transformation:**
+- `SpiProxyWorker` no longer consumes `spi.systema.inbound`. The correlate worker is that topic's sole consumer; it correlates + transforms and publishes a ready-for-System-B event to **`spi.systemb.responses`**, which `SpiProxyWorker` consumes. ✅
+- `IInboundResponseTransformer` / `InboundResponseTransformer` — rewrites System-A-specific fields in the response to System B's values, computed from the stored `SpiSentMsg` A/B pacs.008 pair. Rules are config-driven (`ResponseTransformOptions`, `ResponseTransform:Rules`), seeded in code with **EndToEndId** and the **initiation form** (`LclInstrm/Prtry`, e.g. `DICT`→`MANU`); rules whose target node is absent in the response are skipped. ✅
+- `SystemBInboundReadyDto` carries the transformed XML on `spi.systemb.responses`. ✅
+- `CorrelateSystemAInboundUseCase` now correlates + transforms + publishes; if the pacs.008 pair is missing or incomplete it routes to the DLQ (rather than delivering an untransformed response). ✅
+- `PropagateResponseUseCase` slimmed to sign the transformed XML, enqueue it, record `SpiReceivedMsg` (System B side), and emit correlation/comparison events. The comparison event's System B XML is now the transformed+signed payload — a meaningful A-vs-B diff. ✅
+- Renamed the proxy consumer `SystemAResponseProxyConsumer` → `SystemBResponseProxyConsumer` (new topic + consumer group). ✅
+
+**Sent-side self-sufficiency:**
+- `CorrelateSystemAOutboundUseCase` and `CorrelateSystemBOutboundUseCase` now **create-if-missing** on first arrival (reusing `SpiSentMsg.Create` + `UpdateFromSystemA/B`) instead of throwing when the row is absent, closing the gap left by the removed Orchestrator pre-insert. Mirrors the `SpiReceivedMsg` first-arrival-creates pattern. ✅
+
+**Tests:**
+- `InboundResponseTransformerTests`; `CorrelateSystemAInboundUseCaseTests`, `CorrelateSystemAOutboundUseCaseTests`, `CorrelateSystemBOutboundUseCaseTests`; updated `PropagateResponseUseCaseTests` and the integration round-trip (asserts the delivered response carries System B's `EndToEndId`). ✅
+
+*Delivered in commit `1ffdf0c`.*
 
 

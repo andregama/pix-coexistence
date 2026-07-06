@@ -14,9 +14,10 @@ A .NET 8 coexistence layer that lets an internally-developed Pix system (**Syste
        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                         Kafka                                │
-│  spi.systema.responses   spi.systemb.requests                │
-│  spi.correlation.events  spi.systemb.responses               │
-│  spi.comparison.events   (+ DLQ topics for each)             │
+│  spi.systemb.requests    spi.systema.outbound                │
+│  spi.systema.inbound     spi.systemb.responses               │
+│  spi.correlation.events  spi.comparison.events               │
+│  spi.discrepancies       (+ DLQ topics for each)             │
 └──────────────────────────────────────────────────────────────┘
        ▲                    │
        │                    ▼
@@ -40,17 +41,14 @@ A .NET 8 coexistence layer that lets an internally-developed Pix system (**Syste
 
 ### Request flow
 
-1. **System B** sends an SPI XML message to **spi-proxy-api** (mTLS, ISO 20022 pacs.008).
-2. The API validates, de-duplicates (idempotency via Redis), and publishes the envelope to `spi.systemb.requests`.
-3. **spi-proxy-api** subscribes to a Redis Pub/Sub channel keyed on System B's `EndToEndId` and waits (default 30 s).
-4. **Debezium** captures System A's outbox table and streams CDC events to `spi.systema.responses`.
-5. **spi-correlate-worker** consumes both streams and maps System A ↔ System B IDs using two strategies in priority order:
-   - **Orchestrator** — queries the orchestrator service for the authoritative link.
-   - **Heuristic** — matches on timestamp window, amount, payer, and payee when the orchestrator has no record.
-   The correlation source is persisted so the accuracy of the fallback can be monitored.
-6. **spi-proxy-worker** picks up the correlated System A response, signs the XML via the HSM abstraction, deposits it in Redis, and signals the waiting API via Pub/Sub.
-7. **spi-proxy-api** wakes up, caches the signed response for 24 h, and returns it to System B.
-8. **spi-comparison-engine** consumes both sides and writes `SpiDiscrepancy` rows for any field-level differences, feeding the Grafana dashboard.
+1. **System B** sends an SPI XML message to **spi-proxy-api** (mTLS, ISO 20022 pacs.008). The API validates, de-duplicates (idempotency via Redis), publishes the envelope to `spi.systemb.requests`, and immediately returns `201` with the `PI-ResourceId`(s).
+2. **Debezium** captures System A's two tables and streams CDC events to distinct topics: `SpiEnvioApiBacen` (messages **sent** to Bacen) → `spi.systema.outbound`, and `SpiRecepApiBacen` (messages **received** from Bacen) → `spi.systema.inbound`.
+3. **spi-correlate-worker** is the sole consumer of `spi.systemb.requests`, `spi.systema.outbound`, and `spi.systema.inbound`. It correlates by the shared Bacen **idempotency key** (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004):
+   - **Outbound** — assembles the `SpiSentMsg` System A/B pacs.008 pair. The first of the two to arrive creates the row; the second completes it.
+   - **Inbound** — records System A's response in `SpiReceivedMsg`, looks up the correlated pacs.008 pair, and rewrites the System-A-specific fields to the values **System B expects** (config-driven rules — currently `EndToEndId` and the initiation form `LclInstrm/Prtry`, e.g. `DICT`→`MANU`). It then publishes a ready-for-System-B event to `spi.systemb.responses`.
+4. **spi-proxy-worker** consumes `spi.systemb.responses`, signs the already-transformed XML via the HSM abstraction, and enqueues it on a Redis-backed outbound stream.
+5. **System B** pulls signed responses via `GET /api/v1/out/{ispb}/stream/start` (long-poll), continues the stream with the returned id, and acks a batch with `DELETE` — aligned with the Bacen SPI ICOM §2.2.2 pull model.
+6. **spi-comparison-engine** consumes the correlation/comparison events and writes `SpiDiscrepancy` rows for any field-level differences, feeding the Grafana dashboard.
 
 ---
 
@@ -62,14 +60,14 @@ src/
 ├── Application/               # Use cases, DTOs, application interfaces
 ├── Infrastructure/            # EF Core, Kafka, Redis, HSM, XML signing, metrics
 ├── SpiProxyApi/               # ASP.NET Core — Bacen SPI emulator
-├── SpiCorrelateWorker/        # Worker — ID correlation (orchestrator + heuristic)
-├── SpiProxyWorker/            # Worker — signs and delivers responses to System B
+├── SpiCorrelateWorker/        # Worker — idempotency-key correlation + response transformation
+├── SpiProxyWorker/            # Worker — signs transformed responses and enqueues them for System B to pull
 └── SpiComparisonEngine/       # Worker — field-level comparison and discrepancy logging
 
 tests/
-├── ConvivenciaPix.Domain.Tests/          # Pure unit tests (34 tests)
-├── ConvivenciaPix.Application.Tests/    # Use-case unit tests with Moq (18 tests)
-├── ConvivenciaPix.Infrastructure.Tests/ # Repository, cache, parser, signing (Testcontainers)
+├── ConvivenciaPix.Domain.Tests/          # Pure unit tests
+├── ConvivenciaPix.Application.Tests/    # Use-case unit tests with Moq
+├── ConvivenciaPix.Infrastructure.Tests/ # Repository, cache, parser, signing, transformer (Testcontainers)
 └── ConvivenciaPix.Integration.Tests/    # Full pipeline E2E (Testcontainers)
 ```
 
@@ -192,13 +190,12 @@ Copy `.env.example` to `.env` and set the values marked `CHANGE_ME` before deplo
 | `Kafka__BootstrapServers` | Kafka bootstrap address |
 | `Dinamo__Host` | HSM hostname (or PFX path in non-Production) |
 | `Dinamo__CertificateLabel` | HSM certificate label for SPI signing |
-| `Orchestrator__BaseUrl` | Internal orchestrator service URL |
-| `Orchestrator__ApiKey` | Orchestrator API key |
+| `Correlation__AllowedMessageTypes` | Comma-separated message types the correlate worker processes (default `pacs.002,pacs.004,pacs.008`) |
 | `CertificateValidator__TrustedThumbprints__0` | SHA-1 thumbprint of the trusted Bacen client certificate |
 | `Kestrel__Certificates__Default__Path` | TLS server certificate PFX path (Production) |
 | `Otel__Endpoint` | OpenTelemetry collector gRPC endpoint |
 
-In Development, `LocalDinamoSdkClient` and `StubOrchestratorClient` are injected automatically — no HSM or live orchestrator is required.
+In Development, `LocalDinamoSdkClient` is injected automatically — no HSM is required. Response-transformation rules default to code (`ResponseTransformOptions.DefaultRules`) and can be overridden via the optional `ResponseTransform:Rules` config section.
 
 ---
 
@@ -217,7 +214,6 @@ Grafana credentials: `admin` / `admin` (change on first login).
 
 The pre-provisioned **SPI Overview** dashboard panels:
 
-- Correlation source mix (Orchestrator vs Heuristic ratio)
 - DLQ message rate per topic
 - Proxy response latency percentiles
 - Discrepancy count by field
@@ -227,11 +223,13 @@ The pre-provisioned **SPI Overview** dashboard panels:
 
 ## Key design decisions
 
-**Idempotency** — every SPI message carries a `MessageId`. The proxy API stores responses keyed on `MessageId` in Redis (TTL 24 h) and returns the cached value on any retry without re-processing.
+**Idempotency** — every SPI message carries a `MessageId`. The proxy API de-duplicates inbound requests via Redis, and correlation/comparison events are keyed on the `IdempotentId` so they are processed once across consumer groups.
 
-**Correlation** — the correlate worker tries the orchestrator first, then falls back to heuristic matching (timestamp within a configurable window, amount, payer/payee). The source is stored in `SpiSentMsg.CorrelationSource` so the heuristic fallback rate can be tracked.
+**Correlation** — the correlate worker matches System A and System B by the shared Bacen idempotency key (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004). The sent-side `SpiSentMsg` pair is assembled first-arrival-creates / second-completes; no external orchestrator or heuristic matching is involved.
 
-**Response delivery** — instead of polling, the proxy API waits on a Redis Pub/Sub channel keyed on the System B `EndToEndId`. The proxy worker signals that channel once the signed response is ready, giving sub-millisecond wake-up.
+**Response transformation** — because System A and System B send independent pacs.008 with per-system field values, Bacen's response (which references System A's values) is rewritten to what System B expects before delivery. Rules are config-driven (`ResponseTransformOptions`), seeded with `EndToEndId` and the initiation form `LclInstrm/Prtry`, and skip any field the response does not carry. If the correlated pacs.008 pair is missing or incomplete, the response is routed to the DLQ rather than delivered untransformed.
+
+**Response delivery** — signed responses are enqueued on a Redis-backed outbound stream. System B pulls them with `GET /api/v1/out/{ispb}/stream/start` (long-poll), continues with the returned stream id, and acks a batch via `DELETE` — the Bacen SPI ICOM §2.2.2 pull model.
 
 **mTLS** — in Production, Kestrel requires a client certificate at the TLS layer and `BacenCertificateValidator` enforces thumbprint, expiry, and chain validation. In Development, `DevCertificateValidator` bypasses this check.
 
