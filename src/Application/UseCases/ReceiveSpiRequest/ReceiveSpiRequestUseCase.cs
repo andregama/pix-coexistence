@@ -40,16 +40,19 @@ public sealed class ReceiveSpiRequestUseCase : IReceiveSpiRequestUseCase
             var piResourceId = ResourceIdGenerator.Generate();
             resourceIds.Add(piResourceId);
 
-            // Best-effort MsgId/EndToEndId extraction for correlation. Bacen explicitly does
+            // Best-effort MsgId/IdempotentId extraction for correlation. Bacen explicitly does
             // not validate at this stage, so parse failures must not reject the message.
+            // The idempotency key is message-type dependent (pacs.008/002/004), so resolve the
+            // type first and let the parser pick the right field.
             string? messageId = null;
             string? idSystemB = null;
             try
             {
                 messageId = _xmlParser.ExtractMessageId(message.RawXml);
-                idSystemB = _xmlParser.ExtractEndToEndId(message.RawXml);
+                var msgType = _xmlParser.ExtractMessageType(message.RawXml);
+                idSystemB = _xmlParser.ExtractIdempotentId(message.RawXml, msgType);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
             {
                 _logger.LogWarning(
                     "Inbound XML could not be parsed for ids (still enqueued for processing). PiResourceId={PiResourceId}: {Error}",

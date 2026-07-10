@@ -49,10 +49,30 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
-    public void ExtractEndToEndId_ReturnsValue()
+    public void ExtractMessageType_FromMsgDefIdr_ReturnsPacs008()
+    {
+        var xml = """
+            <Document xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
+              <head:AppHdr>
+                <head:MsgDefIdr>pacs.008.001.08</head:MsgDefIdr>
+              </head:AppHdr>
+            </Document>
+            """;
+        _parser.ExtractMessageType(xml).Should().Be("pacs.008");
+    }
+
+    [Fact]
+    public void ExtractMessageType_FromBusinessElement_ReturnsPacs008()
+    {
+        var xml = "<Document><FIToFICstmrCdtTrf/></Document>";
+        _parser.ExtractMessageType(xml).Should().Be("pacs.008");
+    }
+
+    [Fact]
+    public void ExtractIdempotentId_Pacs008_ReturnsEndToEndId()
     {
         var xml = BuildPacs008(endToEndId: "E2E-XYZ");
-        _parser.ExtractEndToEndId(xml).Should().Be("E2E-XYZ");
+        _parser.ExtractIdempotentId(xml, "pacs.008").Should().Be("E2E-XYZ");
     }
 
     [Fact]
@@ -109,10 +129,10 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
-    public void ExtractEndToEndId_MissingEndToEndId_ThrowsInvalidOperationException()
+    public void ExtractIdempotentId_Pacs008_MissingEndToEndId_ThrowsInvalidOperationException()
     {
-        var xml = "<Document><NoEndToEndId/></Document>";
-        var act = () => _parser.ExtractEndToEndId(xml);
+        var xml = "<Document><FIToFICstmrCdtTrf><CdtTrfTxInf><PmtId/></CdtTrfTxInf></FIToFICstmrCdtTrf></Document>";
+        var act = () => _parser.ExtractIdempotentId(xml, "pacs.008");
         act.Should().Throw<InvalidOperationException>().WithMessage("*EndToEndId*");
     }
 }

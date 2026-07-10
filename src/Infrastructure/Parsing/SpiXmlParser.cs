@@ -27,14 +27,6 @@ public sealed class SpiXmlParser : ISpiXmlParser
             ?? throw new InvalidOperationException("SPI XML missing <MsgId>");
     }
 
-    public string ExtractEndToEndId(string xml)
-    {
-        var (doc, ns) = Load(xml);
-        return SelectText(doc, ns,
-            "//*[local-name()='EndToEndId']")
-            ?? throw new InvalidOperationException("SPI XML missing <EndToEndId>");
-    }
-
     public decimal ExtractAmount(string xml)
     {
         var (doc, ns) = Load(xml);
