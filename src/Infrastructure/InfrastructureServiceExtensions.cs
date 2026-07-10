@@ -55,6 +55,7 @@ public static class InfrastructureServiceExtensions
 
         services.Configure<ResponseTransformOptions>(configuration.GetSection("ResponseTransform"));
         services.AddSingleton<IInboundResponseTransformer, InboundResponseTransformer>();
+        services.AddSingleton<IPibr002Builder, Pibr002Builder>();
 
         AddHsmServices(services, configuration, environment);
         AddCertificateValidator(services, configuration, environment);

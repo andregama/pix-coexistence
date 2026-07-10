@@ -1,4 +1,5 @@
 using ConvivenciaPix.Application.UseCases.CorrelateMessages;
+using ConvivenciaPix.Application.UseCases.GeneratePibr002;
 using ConvivenciaPix.Application.UseCases.PropagateResponse;
 using ConvivenciaPix.Application.UseCases.PullStream;
 using ConvivenciaPix.Application.UseCases.ReceiveSpiRequest;
@@ -14,6 +15,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ICorrelateSystemAOutboundUseCase, CorrelateSystemAOutboundUseCase>();
         services.AddScoped<ICorrelateSystemBOutboundUseCase, CorrelateSystemBOutboundUseCase>();
         services.AddScoped<ICorrelateSystemAInboundUseCase, CorrelateSystemAInboundUseCase>();
+        services.AddScoped<IGeneratePibr002UseCase, GeneratePibr002UseCase>();
         services.AddScoped<IPropagateResponseUseCase, PropagateResponseUseCase>();
         services.AddScoped<IPullStreamUseCase, PullStreamUseCase>();
         services.AddScoped<IAckStreamUseCase, AckStreamUseCase>();

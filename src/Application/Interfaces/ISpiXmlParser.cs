@@ -15,7 +15,8 @@ public interface ISpiXmlParser
     /// Returns the idempotency key as defined in Catálogo de Serviços do SFN v5.12:
     /// pacs.008 → CdtTrfTxInf/PmtId/EndToEndId,
     /// pacs.002 → TxInfAndSts/OrgnlEndToEndId,
-    /// pacs.004 → TxInf/RtrId.
+    /// pacs.004 → TxInf/RtrId,
+    /// pibr.001 → EchoReq/GrpHdr/MsgId (SPI Echo has no EndToEndId).
     /// </summary>
     string ExtractIdempotentId(string xml, string msgType);
 

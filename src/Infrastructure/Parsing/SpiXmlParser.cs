@@ -87,21 +87,29 @@ public sealed class SpiXmlParser : ISpiXmlParser
             if (msgDefIdr.StartsWith("pacs.008", StringComparison.OrdinalIgnoreCase)) return "pacs.008";
             if (msgDefIdr.StartsWith("pacs.002", StringComparison.OrdinalIgnoreCase)) return "pacs.002";
             if (msgDefIdr.StartsWith("pacs.004", StringComparison.OrdinalIgnoreCase)) return "pacs.004";
+            if (msgDefIdr.StartsWith("pibr.001", StringComparison.OrdinalIgnoreCase)) return "pibr.001";
+            if (msgDefIdr.StartsWith("pibr.002", StringComparison.OrdinalIgnoreCase)) return "pibr.002";
         }
 
         // Fallback: infer from the business message element name.
-        // Real Bacen XML is <Document><BusinessMsg>...</BusinessMsg></Document>; the root is
-        // always "Document", so we inspect the first child to get the message type.
+        // Real Bacen XML wraps the business message in <Document>. For pacs.* the root is
+        // "Document" itself; for the SPI Echo (pibr) the root is "Envelope" and <Document> is a
+        // child, so in both cases we look at <Document>'s first business child.
         var rootName = doc.DocumentElement?.LocalName;
-        var businessElement = rootName == "Document"
-            ? doc.DocumentElement?.FirstChild?.LocalName
-            : rootName;
+        var businessElement = rootName switch
+        {
+            "Document" => doc.DocumentElement?.FirstChild?.LocalName,
+            "Envelope" => doc.SelectSingleNode("//*[local-name()='Document']/*", ns)?.LocalName,
+            _ => rootName
+        };
 
         return businessElement switch
         {
             "FIToFICstmrCdtTrf" => "pacs.008",
             "FIToFIPmtStsRpt"   => "pacs.002",
             "PmtRtr"            => "pacs.004",
+            "EchoReq"           => "pibr.001",
+            "EchoRpt"           => "pibr.002",
             _ => throw new InvalidOperationException(
                 $"Cannot determine message type from business element '{businessElement}' and no MsgDefIdr found.")
         };
@@ -123,6 +131,12 @@ public sealed class SpiXmlParser : ISpiXmlParser
             "pacs.004" => SelectText(doc, ns,
                     "//*[local-name()='TxInf']/*[local-name()='RtrId']")
                 ?? throw new InvalidOperationException("pacs.004 XML missing TxInf/RtrId"),
+
+            // SPI Echo (pibr.001) has no EndToEndId; the message identity is GrpHdr/MsgId
+            // (equal to AppHdr/BizMsgIdr).
+            "pibr.001" => SelectText(doc, ns,
+                    "//*[local-name()='EchoReq']/*[local-name()='GrpHdr']/*[local-name()='MsgId']")
+                ?? throw new InvalidOperationException("pibr.001 XML missing EchoReq/GrpHdr/MsgId"),
 
             _ => throw new ArgumentException($"Unsupported msgType '{msgType}'", nameof(msgType))
         };
