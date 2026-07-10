@@ -120,10 +120,14 @@ The solution is built on **.NET 8**, **Clean Architecture / DDD**, **Kafka**, **
 | RF-13 | Response transformation to System B's expected values (config-driven rules) | Phase 9 ✅ |
 | RF-14 | Sent-side self-sufficiency: first-arrival creates `SpiSentMsg`, no external pre-insert | Phase 9 ✅ |
 | RF-15 | Consume a single merged System A CDC topic, dispatching by `source.table` (production-parity) | Phase 10 ✅ |
+| RF-16 | Message-type-aware idempotency-key extraction (`pibr.001` → `EchoReq/GrpHdr/MsgId`; no longer assumes `EndToEndId`) | Phase 11 ✅ |
+| RF-17 | SPI Echo (`pibr.001`) answered with a synthesised, signed `pibr.002`, bypassing correlation | Phase 11 ✅ |
+| RF-18 | XML signing through the HSM only (real Dinamo `SignPIX`/`VerifyPIX`); signature in `AppHdr/Sgntr` | Phase 12 ✅ |
+| RF-19 | End-to-end coverage of every coexistence flow (Testcontainers full pipeline) | Phase 13 ✅ |
 
 ---
 
-## Architecture Summary (Current — Phase 10)
+## Architecture Summary (Current — Phase 13)
 
 ```
 System B ──► POST /api/v1/in/{ispb}/msgs ──► ReceiveSpiRequestUseCase ──► spi.systemb.requests
@@ -152,6 +156,11 @@ System A ─► Bacen ─► SpiEnvioApiBacen ─┐                            
 > The proxy worker no longer consumes System A CDC directly. The correlate worker owns the merged
 > `spi.systema.cdc` topic, performs the A→B field transformation, and hands the proxy worker a ready-to-sign payload on
 > `spi.systemb.responses`.
+>
+> **SPI Echo (`pibr.001`)** takes a shortcut through the same machinery: the correlate worker dispatches it by
+> message type *before* the correlation gate, synthesises the `pibr.002` EchoRpt, and publishes it straight to
+> `spi.systemb.responses`. The proxy worker signs and enqueues it like any other response — no correlation,
+> no System A leg. Signing goes through `IHsmService` only (Dinamo `SignPIX`), placing the signature in `AppHdr/Sgntr`.
 
 ## Phase 8 — Schema Restructure & Dual-Flow Correlation ✅ Complete
 
@@ -373,5 +382,41 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 - **Topics:** `Topics.SystemACdc = "spi.systema.cdc"` (+ `.dlq`); removed the obsolete `SystemAInbound`/`SystemAOutbound` constants. Consumer topic is overridable via `Kafka:SystemACdcTopic`. ✅
 - **Dispatch:** new `CdcSource.ExtractTable` helper reads `source.table`; new `SystemACdcCorrelateConsumer` (single consumer, group `spi-correlate-systema-cdc`) routes each event to `CorrelateSystemAOutboundUseCase` (`SpiEnvioApiBacen`) or `CorrelateSystemAInboundUseCase` (`SpiRecepApiBacen`); unknown table / tombstone is logged and skipped. The two old dedicated consumers were removed. The use cases and mappers are unchanged. ✅
 - **Infra/tests:** docker-compose provisions `spi.systema.cdc` (+ `.dlq`); the integration fixture registers the single consumer, and the round-trip publishes a full envelope with `source.table`. New `CdcSourceTests`. ✅
+
+---
+
+## Phase 11 — SPI Echo (`pibr.001` → `pibr.002`) Self-Service Flow ✅ Complete
+
+**Goal:** Accept the SPI Echo keepalive (`pibr.001`) that System B originates itself and answer it with a synthesised, signed `pibr.002` (EchoRpt). Because there is no System A counterpart, the message must **not** go through correlation.
+
+*Prerequisite (commit `5d1174a`): `ReceiveSpiRequestUseCase` no longer assumes every message carries an `EndToEndId`. It now resolves the message type first and extracts the message-type-aware **IdempotentId** via `SpiXmlParser.ExtractIdempotentId`, so `pibr.001` (and any future type) is enqueued with the correct key instead of being rejected.*
+
+### Deliverables
+
+- **Parser:** `SpiXmlParser` recognises `pibr.001`/`pibr.002` (via `MsgDefIdr` and the `EchoReq`/`EchoRpt` business element under the `<Envelope>` root) and extracts the Echo idempotency key from `EchoReq/GrpHdr/MsgId`. ✅
+- **Builder:** new `IPibr002Builder` / `Pibr002Builder` synthesises the `pibr.002` — swaps `Fr`/`To`, mints a fresh schema-valid `MsgId`, sets `MsgDefIdr`/timestamps, and echoes `Data`→`OrgnlData`. ✅
+- **Use case + dispatch:** new `GeneratePibr002UseCase` publishes a `SystemBInboundReadyDto(MsgType="pibr.002")` to `spi.systemb.responses`; `SystemBOutboundCorrelateConsumer` dispatches `pibr.001` to it (mirroring the CDC dispatch-by-table pattern) **before** the correlation gate, so correlation semantics and `AllowedMessageTypes` are untouched. Everything downstream (sign + enqueue + pull) is reused unchanged. A System-B-only `SpiReceivedMsg` row is written (`IsComplete=false`, so no comparison event fires). ✅
+- **Schema source:** Catálogo de Serviços do SFN v5.12.1 (`pibr.001`/`pibr.002` XSDs + examples). ✅
+
+## Phase 12 — HSM-Only PIX Signing via the Real Dinamo SDK ✅ Complete
+
+**Goal:** Sign SPI XML through the HSM **only**. The Dinamo HSM signs the whole PIX envelope internally (`SignPIX`, signature in `AppHdr/Sgntr`), making the managed BCL signer redundant — and it had been placing the signature at the document root instead.
+
+### Deliverables
+
+- **Interfaces:** `IHsmService` is now the single XML-signing surface (`SignXmlAsync` / `VerifyXmlAsync`); `IXmlSigningService`/`XmlSigningService` were deleted. `IDinamoSdkClient` reshaped to the SDK's `SignPIX`/`VerifyPIX` (+ `Connect`/`Disconnect`). `PropagateResponseUseCase` calls `IHsmService.SignXmlAsync` directly. ✅
+- **Signer:** the enveloped-signature logic moved into an internal `EnvelopedXmlSigner` that inserts the signature into `AppHdr/Sgntr` (root fallback), shared by `MockHsmService` (Dev) and `LocalDinamoSdkClient` (Staging). ✅
+- **Real SDK:** new `DinamoNetSdkClient` wraps `Dinamo.Hsm.DinamoClient`; DI registers it in Production, `LocalDinamoSdkClient` in Staging, `MockHsmService` in Development. Added `Dinamo.Hsm` 4.26.0 (public nuget, net8.0). `DinamoOptions` → `CertId`/`KeyId`/`ChainId`/`Crl` (dropped `SignMechanism`); all `Dinamo` appsettings updated. ✅
+- **Tests:** `EnvelopedXmlSigner` (asserts `AppHdr/Sgntr` placement, round-trip, tamper), `DinamoHsmService` (call order + disconnect-on-throw), `LocalDinamoSdkClient` (SignPIX↔VerifyPIX), and `DinamoNetSdkClient` (managed guards + a reflection contract guard against the real SDK signatures). ✅
+
+## Phase 13 — Comprehensive End-to-End Test Coverage ✅ Complete
+
+**Goal:** Prove every coexistence flow end-to-end against real infrastructure.
+
+### Deliverables
+
+- **Harness:** the Testcontainers integration fixture now hosts **all four** worker consumers in-process (added `SpiComparisonConsumer`), and a shared collection fixture (`IntegrationTestCollection`) reuses one container set across test classes. ✅
+- **Flows (`SpiFlowTests`):** `pibr.001`→signed `pibr.002` (signature in `AppHdr/Sgntr`); ingest edge cases (415, duplicate); System B outbound persists `SpiSentMsg`; System A+B outbound complete the shared row; divergent business fields raise a discrepancy (persisted **and** published, RF-08); inbound Bacen error propagated to System B as a signed `RJCT` (RF-04); uncorrelated inbound routed to the DLQ (RF-07); delete-unknown-stream → 410. ✅
+- **Reliability:** helpers drain-until-found on stream pulls, consume Kafka with fresh groups from earliest, poll the DB for RF-08 persistence, and sequence the two correlation sides to avoid the create-if-missing race. Full suite: **14/14 green** (Docker required). ✅
 
 

@@ -41,12 +41,13 @@ A .NET 8 coexistence layer that lets an internally-developed Pix system (**Syste
 
 ### Request flow
 
-1. **System B** sends an SPI XML message to **spi-proxy-api** (mTLS, ISO 20022 pacs.008). The API validates, de-duplicates (idempotency via Redis), publishes the envelope to `spi.systemb.requests`, and immediately returns `201` with the `PI-ResourceId`(s).
+1. **System B** sends an SPI XML message to **spi-proxy-api** (mTLS, ISO 20022 `pacs.008`/`pacs.002`/`pacs.004`, or a `pibr.001` SPI Echo request). The API validates, de-duplicates (idempotency via Redis), extracts the message-type-aware idempotency key, publishes the envelope to `spi.systemb.requests`, and immediately returns `201` with the `PI-ResourceId`(s).
 2. **Debezium** captures System A's two tables — `SpiEnvioApiBacen` (messages **sent** to Bacen) and `SpiRecepApiBacen` (messages **received** from Bacen) — and streams both into a single topic `spi.systema.cdc`, matching the production Debezium configuration.
 3. **spi-correlate-worker** consumes `spi.systemb.requests` and `spi.systema.cdc`, dispatching each CDC event to the inbound or outbound flow by its Debezium `source.table`. It correlates by the shared Bacen **idempotency key** (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004):
    - **Outbound** — assembles the `SpiSentMsg` System A/B pacs.008 pair. The first of the two to arrive creates the row; the second completes it.
    - **Inbound** — records System A's response in `SpiReceivedMsg`, looks up the correlated pacs.008 pair, and rewrites the System-A-specific fields to the values **System B expects** (config-driven rules — currently `EndToEndId` and the initiation form `LclInstrm/Prtry`, e.g. `DICT`→`MANU`). It then publishes a ready-for-System-B event to `spi.systemb.responses`.
-4. **spi-proxy-worker** consumes `spi.systemb.responses`, signs the already-transformed XML via the HSM abstraction, and enqueues it on a Redis-backed outbound stream.
+   - **Echo (`pibr.001`)** — a keepalive System B originates itself, with **no** System A counterpart. The worker recognises it by message type (dispatching before correlation), synthesises the matching `pibr.002` EchoRpt (swaps `Fr`/`To`, mints a fresh `MsgId`, echoes `Data`→`OrgnlData`), and publishes it straight to `spi.systemb.responses` — bypassing correlation entirely.
+4. **spi-proxy-worker** consumes `spi.systemb.responses` and signs the payload through the **HSM abstraction only** (`IHsmService`). The Dinamo HSM signs the whole SPI envelope (`SignPIX`) and places the signature in `AppHdr/Sgntr`; it then enqueues the signed XML on a Redis-backed outbound stream.
 5. **System B** pulls signed responses via `GET /api/v1/out/{ispb}/stream/start` (long-poll), continues the stream with the returned id, and acks a batch with `DELETE` — aligned with the Bacen SPI ICOM §2.2.2 pull model.
 6. **spi-comparison-engine** consumes the correlation/comparison events and writes `SpiDiscrepancy` rows for any field-level differences, feeding the Grafana dashboard.
 
@@ -60,7 +61,7 @@ src/
 ├── Application/               # Use cases, DTOs, application interfaces
 ├── Infrastructure/            # EF Core, Kafka, Redis, HSM, XML signing, metrics
 ├── SpiProxyApi/               # ASP.NET Core — Bacen SPI emulator
-├── SpiCorrelateWorker/        # Worker — idempotency-key correlation + response transformation
+├── SpiCorrelateWorker/        # Worker — idempotency-key correlation, response transformation, pibr Echo generation
 ├── SpiProxyWorker/            # Worker — signs transformed responses and enqueues them for System B to pull
 └── SpiComparisonEngine/       # Worker — field-level comparison and discrepancy logging
 
@@ -159,7 +160,7 @@ These cover all domain entities, value objects, and application use cases via Mo
 dotnet test tests/ConvivenciaPix.Infrastructure.Tests/ConvivenciaPix.Infrastructure.Tests.csproj
 ```
 
-Spins up MsSql and Redis containers via Testcontainers to validate repositories, the response cache, the XML parser, and the XML signing service.
+Spins up MsSql and Redis containers via Testcontainers to validate repositories, the response cache, the XML parser (including `pibr.001` detection and the message-type-aware idempotency key), the `pibr.002` builder, the enveloped XML signer (signature placed in `AppHdr/Sgntr`), and the Dinamo HSM SDK wrapper.
 
 ### Integration / E2E tests (Docker required)
 
@@ -167,7 +168,7 @@ Spins up MsSql and Redis containers via Testcontainers to validate repositories,
 dotnet test tests/ConvivenciaPix.Integration.Tests/ConvivenciaPix.Integration.Tests.csproj
 ```
 
-Starts the full stack (Kafka + SQL + Redis containers) and runs `WebApplicationFactory<Program>` to exercise the complete request pipeline, including correlation and response delivery.
+Starts the full stack (Kafka + SQL + Redis containers) and runs `WebApplicationFactory<Program>` with all four workers hosted in-process to exercise every coexistence flow end-to-end: ingest (single/multipart/415/duplicate), the `pibr.001`→signed `pibr.002` Echo, System B / System A outbound correlation and completion, the comparison engine (discrepancy persisted **and** published), Bacen error propagation to System B (RF-04), DLQ routing for uncorrelated events (RF-07), and the pull-stream ack lifecycle.
 
 ### All tests
 
@@ -189,13 +190,15 @@ Copy `.env.example` to `.env` and set the values marked `CHANGE_ME` before deplo
 | `ConnectionStrings__Redis` | Redis connection string |
 | `Kafka__BootstrapServers` | Kafka bootstrap address |
 | `Dinamo__Host` | HSM hostname (or PFX path in non-Production) |
-| `Dinamo__CertificateLabel` | HSM certificate label for SPI signing |
+| `Dinamo__CertId` | HSM signing certificate id (label) — passed to `SignPIX` |
+| `Dinamo__KeyId` | HSM signing key id (label) — passed to `SignPIX` |
+| `Dinamo__ChainId` | HSM certificate-chain id used by `VerifyPIX` |
 | `Correlation__AllowedMessageTypes` | Comma-separated message types the correlate worker processes (default `pacs.002,pacs.004,pacs.008`) |
 | `CertificateValidator__TrustedThumbprints__0` | SHA-1 thumbprint of the trusted Bacen client certificate |
 | `Kestrel__Certificates__Default__Path` | TLS server certificate PFX path (Production) |
 | `Otel__Endpoint` | OpenTelemetry collector gRPC endpoint |
 
-In Development, `LocalDinamoSdkClient` is injected automatically — no HSM is required. Response-transformation rules default to code (`ResponseTransformOptions.DefaultRules`) and can be overridden via the optional `ResponseTransform:Rules` config section.
+HSM wiring is environment-driven: **Development** uses `MockHsmService` (self-signed dev PFX, no HSM required), **Staging** uses `LocalDinamoSdkClient` (software PFX simulation of the SDK), and **Production** uses `DinamoNetSdkClient` (the real `Dinamo.Hsm` SDK). Response-transformation rules default to code (`ResponseTransformOptions.DefaultRules`) and can be overridden via the optional `ResponseTransform:Rules` config section.
 
 ---
 
@@ -228,6 +231,10 @@ The pre-provisioned **SPI Overview** dashboard panels:
 **Correlation** — the correlate worker matches System A and System B by the shared Bacen idempotency key (`EndToEndId` for pacs.008/pacs.002, `RtrId` for pacs.004). The sent-side `SpiSentMsg` pair is assembled first-arrival-creates / second-completes; no external orchestrator or heuristic matching is involved.
 
 **Response transformation** — because System A and System B send independent pacs.008 with per-system field values, Bacen's response (which references System A's values) is rewritten to what System B expects before delivery. Rules are config-driven (`ResponseTransformOptions`), seeded with `EndToEndId` and the initiation form `LclInstrm/Prtry`, and skip any field the response does not carry. If the correlated pacs.008 pair is missing or incomplete, the response is routed to the DLQ rather than delivered untransformed.
+
+**SPI Echo (`pibr.001`)** — Echo requests are originated by System B itself and have no System A transaction to correlate against. The correlate worker dispatches them by message type *before* the correlation gate and generates the matching `pibr.002` EchoRpt directly, reusing the existing sign-and-deliver path — so no new topic, consumer, or signing code is required, and the message never creates a perpetually-incomplete correlation row.
+
+**XML signing** — all signing goes through `IHsmService` only. In Production the Dinamo HSM signs the entire SPI envelope internally (`SignPIX`) and places the signature in `AppHdr/Sgntr`; the software paths (dev/staging) mirror that placement via `EnvelopedXmlSigner`. The former managed `XmlSigningService` (which appended the signature at the document root) was removed.
 
 **Response delivery** — signed responses are enqueued on a Redis-backed outbound stream. System B pulls them with `GET /api/v1/out/{ispb}/stream/start` (long-poll), continues with the returned stream id, and acks a batch via `DELETE` — the Bacen SPI ICOM §2.2.2 pull model.
 
