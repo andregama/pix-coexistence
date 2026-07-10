@@ -12,7 +12,8 @@ using Xunit;
 
 namespace ConvivenciaPix.Integration.Tests;
 
-public sealed class SpiPipelineTests : IClassFixture<IntegrationTestFixture>
+[Collection(IntegrationTestCollection.Name)]
+public sealed class SpiPipelineTests
 {
     private readonly IntegrationTestFixture _fixture;
     private readonly HttpClient _client;

@@ -12,6 +12,7 @@
     <ProjectReference Include="..\..\src\SpiProxyApi\ConvivenciaPix.SpiProxyApi.csproj" />
     <ProjectReference Include="..\..\src\SpiCorrelateWorker\ConvivenciaPix.SpiCorrelateWorker.csproj" />
     <ProjectReference Include="..\..\src\SpiProxyWorker\ConvivenciaPix.SpiProxyWorker.csproj" />
+    <ProjectReference Include="..\..\src\SpiComparisonEngine\ConvivenciaPix.SpiComparisonEngine.csproj" />
   </ItemGroup>
 
   <ItemGroup>

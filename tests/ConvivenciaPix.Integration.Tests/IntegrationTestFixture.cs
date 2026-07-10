@@ -2,6 +2,7 @@ using Confluent.Kafka;
 using ConvivenciaPix.Application;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Persistence;
+using ConvivenciaPix.SpiComparisonEngine.Consumers;
 using ConvivenciaPix.SpiCorrelateWorker.Consumers;
 using ConvivenciaPix.SpiProxyWorker.Consumers;
 using Microsoft.AspNetCore.Authentication;
@@ -97,10 +98,11 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
                 }).Build();
             });
 
-            // Register workers as hosted services so they run during the test
+            // Register every worker consumer as a hosted service so the full pipeline runs in-process.
             services.AddHostedService<SystemACdcCorrelateConsumer>();
             services.AddHostedService<SystemBOutboundCorrelateConsumer>();
             services.AddHostedService<SystemBResponseProxyConsumer>();
+            services.AddHostedService<SpiComparisonConsumer>();
         });
     }
 }
