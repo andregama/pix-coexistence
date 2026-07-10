@@ -13,15 +13,15 @@ public sealed class DinamoOptions
     public string UserId { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
 
-    /// <summary>Label of the certificate stored in the HSM slot.</summary>
-    public string CertificateLabel { get; set; } = string.Empty;
+    /// <summary>Id (label) of the signing certificate stored in the HSM. Passed to SignPIX.</summary>
+    public string CertId { get; set; } = string.Empty;
 
-    /// <summary>Label of the private key stored in the HSM slot.</summary>
-    public string KeyLabel { get; set; } = string.Empty;
+    /// <summary>Id (label) of the signing private key stored in the HSM. Passed to SignPIX.</summary>
+    public string KeyId { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Signing mechanism. Matches DinamoAPI mechanism constants.
-    /// Default: RSA_PKCS1_V1_5 (equivalent to DNET.ALG_RSA_2048 with MODE_PKCS1_V1_5).
-    /// </summary>
-    public string SignMechanism { get; set; } = "RSA_PKCS1_V1_5";
+    /// <summary>Id (label) of the certificate chain used by VerifyPIX.</summary>
+    public string ChainId { get; set; } = string.Empty;
+
+    /// <summary>Certificate revocation list reference used by VerifyPIX (may be empty).</summary>
+    public string Crl { get; set; } = string.Empty;
 }

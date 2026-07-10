@@ -6,6 +6,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Expose internal helpers (e.g. EnvelopedXmlSigner) to the unit test assembly. -->
+    <InternalsVisibleTo Include="ConvivenciaPix.Infrastructure.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="StackExchange.Redis" />
@@ -13,6 +18,7 @@
     <PackageReference Include="Quartz.Extensions.Hosting" />
     <PackageReference Include="Quartz.Extensions.DependencyInjection" />
     <PackageReference Include="System.Security.Cryptography.Xml" />
+    <PackageReference Include="Dinamo.Hsm" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
   </ItemGroup>
 

@@ -50,7 +50,6 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<IResponseCache, RedisResponseCache>();
         services.AddSingleton<IOutboundStream, RedisOutboundStream>();
 
-        services.AddSingleton<IXmlSigningService, XmlSigningService>();
         services.AddSingleton<ISpiXmlParser, SpiXmlParser>();
 
         services.Configure<ResponseTransformOptions>(configuration.GetSection("ResponseTransform"));
@@ -79,7 +78,13 @@ public static class InfrastructureServiceExtensions
         }
         else
         {
-            services.AddSingleton<IDinamoSdkClient, LocalDinamoSdkClient>();
+            // Production talks to the real HSM (native lib); Staging uses the software PFX
+            // simulation. Both go through DinamoHsmService via the IDinamoSdkClient contract.
+            if (environment.IsProduction())
+                services.AddSingleton<IDinamoSdkClient, DinamoNetSdkClient>();
+            else
+                services.AddSingleton<IDinamoSdkClient, LocalDinamoSdkClient>();
+
             services.AddSingleton<IHsmService, DinamoHsmService>();
         }
     }

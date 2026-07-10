@@ -9,7 +9,6 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Xml.Linq;
 
 namespace ConvivenciaPix.Application.UseCases.PropagateResponse;
 
@@ -21,7 +20,6 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOutboundStream _outboundStream;
     private readonly IHsmService _hsmService;
-    private readonly IXmlSigningService _xmlSigningService;
     private readonly IKafkaPublisher _publisher;
     private readonly ISpiMetrics _metrics;
     private readonly ILogger<PropagateResponseUseCase> _logger;
@@ -30,7 +28,6 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         IServiceScopeFactory scopeFactory,
         IOutboundStream outboundStream,
         IHsmService hsmService,
-        IXmlSigningService xmlSigningService,
         IKafkaPublisher publisher,
         ISpiMetrics metrics,
         ILogger<PropagateResponseUseCase> logger)
@@ -38,7 +35,6 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         _scopeFactory = scopeFactory;
         _outboundStream = outboundStream;
         _hsmService = hsmService;
-        _xmlSigningService = xmlSigningService;
         _publisher = publisher;
         _metrics = metrics;
         _logger = logger;
@@ -50,12 +46,11 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
 
         // The correlate worker has already transformed the response to System B's expectations;
         // here we only sign it, enqueue it for System B to pull, and record the delivered XML.
+        // The HSM signs the whole envelope (Dinamo SignPIX) and places the signature in AppHdr/Sgntr.
         string signedXml;
         using (SpiActivitySource.StartProxyActivity("proxy.xml-sign"))
         {
-            var cert = await _hsmService.GetSigningCertificateAsync(cancellationToken);
-            signedXml = await _xmlSigningService.SignAsync(
-                XDocument.Parse(ready.TransformedXml), cert);
+            signedXml = await _hsmService.SignXmlAsync(ready.TransformedXml, cancellationToken);
         }
 
         var piResourceId = ResourceIdGenerator.Generate();

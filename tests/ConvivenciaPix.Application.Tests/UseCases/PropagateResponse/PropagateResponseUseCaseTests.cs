@@ -7,9 +7,6 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-using System.Xml.Linq;
 using Xunit;
 
 namespace ConvivenciaPix.Application.Tests.UseCases.PropagateResponse;
@@ -21,7 +18,6 @@ public sealed class PropagateResponseUseCaseTests
     private readonly Mock<IServiceProvider> _serviceProviderMock = new();
     private readonly Mock<IOutboundStream> _outboundMock = new();
     private readonly Mock<IHsmService> _hsmMock = new();
-    private readonly Mock<IXmlSigningService> _signingMock = new();
     private readonly Mock<IKafkaPublisher> _publisherMock = new();
     private readonly Mock<ISpiMetrics> _metricsMock = new();
     private readonly Mock<ISpiReceivedMsgRepository> _receivedRepoMock = new();
@@ -47,7 +43,6 @@ public sealed class PropagateResponseUseCaseTests
             _scopeFactoryMock.Object,
             _outboundMock.Object,
             _hsmMock.Object,
-            _signingMock.Object,
             _publisherMock.Object,
             _metricsMock.Object,
             NullLogger<PropagateResponseUseCase>.Instance);
@@ -97,13 +92,7 @@ public sealed class PropagateResponseUseCaseTests
             Times.Never);
     }
 
-    private void SetupCert(string signedXml)
-    {
-        using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest("CN=Test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddYears(1));
-        _hsmMock.Setup(h => h.GetSigningCertificateAsync(It.IsAny<CancellationToken>())).ReturnsAsync(cert);
-        _signingMock.Setup(s => s.SignAsync(It.IsAny<XDocument>(), It.IsAny<X509Certificate2>()))
+    private void SetupCert(string signedXml) =>
+        _hsmMock.Setup(h => h.SignXmlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(signedXml);
-    }
 }

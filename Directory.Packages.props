@@ -39,8 +39,12 @@
     <!-- XML Signing -->
     <!-- Use latest version; GHSA-37gx-xxp4-5rgx and GHSA-w3x6-4m5h-cxqf are inherent to the
          XML DSIG spec (HMAC truncation). Bacen requires this package for SPI message signing.
-         The risk is mitigated by using only RSA/SHA-256 — never HMAC — in IXmlSigningService. -->
+         The risk is mitigated by using only RSA/SHA-256 — never HMAC — in EnvelopedXmlSigner. -->
     <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.7" />
+
+    <!-- Dinamo HSM SDK — production PIX signing (SignPIX/VerifyPIX). Managed wrapper restores
+         everywhere; the native HSM library is only required at runtime in Production. -->
+    <PackageVersion Include="Dinamo.Hsm" Version="4.26.0" />
 
     <!-- Security / mTLS -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.Certificate" Version="8.0.11" />

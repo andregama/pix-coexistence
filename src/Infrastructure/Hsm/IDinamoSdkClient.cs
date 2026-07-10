@@ -1,40 +1,33 @@
-using System.Security.Cryptography.X509Certificates;
-
 namespace ConvivenciaPix.Infrastructure.Hsm;
 
 /// <summary>
-/// Mirrors the DinamoAPI.NET (DNET) contract for HSM operations used by this solution.
-/// Implementations:
-///   - LocalDinamoSdkClient: .NET BCL only — no DinamoAPI.dll required. Used in Development and Staging.
-///   - DinamoNetSdkClient:   wraps the real DNET class from DinamoAPI.dll. Plugged in by ops at Production deploy.
+/// Mirrors the DinamoAPI.NET (Dinamo.Hsm) contract for the PIX/SPI signing operations used by
+/// this solution. Implementations:
+///   - LocalDinamoSdkClient: .NET BCL only — no native HSM library required. Used in Staging.
+///   - DinamoNetSdkClient:   wraps the real Dinamo.Hsm.DinamoClient. Used in Production.
 ///
-/// Method signatures match the DinamoAPI.NET SDK exactly so swapping implementations requires no changes
-/// to DinamoHsmService or any caller.
+/// The HSM signs the whole envelope internally (SignPIX) and validates it (VerifyPIX); keys and
+/// certificates are referenced by label and never leave the HSM.
 /// </summary>
 public interface IDinamoSdkClient
 {
-    /// <summary>
-    /// Opens an authenticated session to the HSM.
-    /// Equivalent to DNET.Open(host, port, userId, password, encrypted: true).
-    /// </summary>
+    /// <summary>Opens an authenticated session to the HSM.</summary>
     void Connect(string host, int port, string userId, string password);
 
     /// <summary>
-    /// Retrieves the X.509 certificate associated with the given label from the HSM key store.
-    /// Equivalent to DNET.GetUserCertificate(certificateLabel).
+    /// Signs the unsigned PIX/SPI envelope with the private key <paramref name="keyId"/> and
+    /// certificate <paramref name="certId"/>, returning the signed envelope bytes.
+    /// Equivalent to DinamoClient.SignPIX(keyId, certId, unsignedEnvelope).
     /// </summary>
-    X509Certificate2 GetCertificate(string certificateLabel);
+    byte[] SignPIX(string keyId, string certId, byte[] unsignedEnvelope);
 
     /// <summary>
-    /// Signs <paramref name="data"/> using the private key identified by <paramref name="keyLabel"/>.
-    /// Equivalent to DNET.DSPKISign(keyLabel, data, mechanism).
-    /// Supported mechanism values: "RSA_PKCS1_V1_5".
+    /// Verifies the signature on <paramref name="signedEnvelope"/> against the certificate chain
+    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/>.
+    /// Equivalent to DinamoClient.VerifyPIX(chainId, crl, signedEnvelope).
     /// </summary>
-    byte[] Sign(string keyLabel, byte[] data, string mechanism);
+    bool VerifyPIX(string chainId, string crl, string signedEnvelope);
 
-    /// <summary>
-    /// Closes the HSM session and releases the connection.
-    /// Equivalent to DNET.Close().
-    /// </summary>
+    /// <summary>Closes the HSM session and releases the connection.</summary>
     void Disconnect();
 }

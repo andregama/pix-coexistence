@@ -27,7 +27,13 @@ public sealed class MockHsmService : IHsmService
         _logger = logger;
     }
 
-    public Task<X509Certificate2> GetSigningCertificateAsync(CancellationToken cancellationToken = default)
+    public Task<string> SignXmlAsync(string unsignedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(EnvelopedXmlSigner.Sign(unsignedXml, GetCertificate()));
+
+    public Task<bool> VerifyXmlAsync(string signedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(EnvelopedXmlSigner.Verify(signedXml, GetCertificate()));
+
+    private X509Certificate2 GetCertificate()
     {
         if (_cachedCert is null)
         {
@@ -38,15 +44,7 @@ public sealed class MockHsmService : IHsmService
             _logger.LogMockHsmLoaded(_pfxPath);
         }
 
-        return Task.FromResult(_cachedCert);
-    }
-
-    public async Task<byte[]> SignDataAsync(byte[] data, CancellationToken cancellationToken = default)
-    {
-        var cert = await GetSigningCertificateAsync(cancellationToken);
-        using var rsa = cert.GetRSAPrivateKey()
-            ?? throw new InvalidOperationException("Dev cert has no RSA private key.");
-        return rsa.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        return _cachedCert;
     }
 
     private void GenerateSelfSignedCert()
