@@ -172,6 +172,28 @@ public sealed class SpiFlowTests
         body.Should().Contain($"<OrgnlEndToEndId>{systemBE2e}</OrgnlEndToEndId>");
     }
 
+    [Fact]
+    public async Task InboundArrivingBeforeSystemBSide_IsRetried_ThenCorrelated()
+    {
+        var systemAE2e = NewId();
+        var systemBE2e = NewId();
+
+        // The Bacen inbound response arrives before the outbound A/B pair is complete: the correlate
+        // use case must retry the sent-row lookup instead of dead-lettering immediately.
+        var response = BuildPacs002Xml("BACEN-" + systemAE2e, systemAE2e);
+        await PublishCdcAsync(CdcSource.InboundTable, systemAE2e, response);
+
+        // Seed the complete pair shortly after, within the retry backoff window.
+        await Task.Delay(500);
+        await SeedCompletePacs008PairAsync(systemAE2e, systemBE2e);
+
+        var body = await PullUntilAsync("11111111", b => b.Contains(systemBE2e));
+
+        body.Should().NotBeNull("the retried correlation must deliver the response to System B");
+        body!.Should().Contain($"<OrgnlEndToEndId>{systemBE2e}</OrgnlEndToEndId>",
+            "the late-completing correlation is transformed to System B's identifier");
+    }
+
     // ---------------------------------------------------------------- resiliency / DLQ (RF-07)
 
     [Fact]

@@ -4,6 +4,7 @@ using ConvivenciaPix.Application.Mappers;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Repositories;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.Json;
 
@@ -20,6 +21,8 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
     private readonly ISpiXmlParser _xmlParser;
     private readonly IInboundResponseTransformer _transformer;
     private readonly IKafkaPublisher _publisher;
+    private readonly TimeProvider _timeProvider;
+    private readonly CorrelateInboundRetryOptions _retry;
     private readonly ILogger<CorrelateSystemAInboundUseCase> _logger;
 
     public CorrelateSystemAInboundUseCase(
@@ -28,6 +31,8 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         ISpiXmlParser xmlParser,
         IInboundResponseTransformer transformer,
         IKafkaPublisher publisher,
+        IOptions<CorrelateInboundRetryOptions> retryOptions,
+        TimeProvider timeProvider,
         ILogger<CorrelateSystemAInboundUseCase> logger)
     {
         _receivedMsgRepo = receivedMsgRepo;
@@ -35,6 +40,8 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _xmlParser = xmlParser;
         _transformer = transformer;
         _publisher = publisher;
+        _retry = retryOptions.Value;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -70,12 +77,10 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         }
 
         // Correlate against the stored pacs.008 A/B pair so the response can be rewritten to the
-        // values System B expects. Missing/incomplete correlation -> DLQ (via KafkaConsumerBase).
-        var sent = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
-        if (sent is null || !sent.IsComplete)
-            throw new InvalidOperationException(
-                $"SpiSentMsg not found or incomplete for IdempotentId={idempotentId} MsgType={msgType}. " +
-                "Cannot transform response for System B. Routing to DLQ.");
+        // values System B expects. The row only becomes complete once both outbound sides land; the
+        // inbound response can race ahead of System B's side, so retry with backoff before giving up.
+        // Persistently missing/incomplete correlation -> DLQ (via KafkaConsumerBase).
+        var sent = await CorrelateSentMsgAsync(idempotentId, msgType, ct);
 
         var transformedXml = _transformer.Transform(mapped.XmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
 
@@ -97,5 +102,43 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _logger.LogInformation(
             "SystemA inbound correlated and transformed for System B. IdempotentId={Id} MsgType={Type}",
             idempotentId, msgType);
+    }
+
+    /// <summary>
+    /// Re-reads the correlated <c>SpiSentMsg</c> until it is complete, applying bounded exponential
+    /// backoff to absorb the race where the inbound response arrives before System B's outbound side
+    /// is persisted. Throws once <see cref="CorrelateInboundRetryOptions.MaxAttempts"/> is reached so
+    /// the consumer dead-letters the event.
+    /// </summary>
+    private async Task<SpiSentMsg> CorrelateSentMsgAsync(string idempotentId, string msgType, CancellationToken ct)
+    {
+        var maxAttempts = Math.Max(1, _retry.MaxAttempts);
+        for (var attempt = 1; ; attempt++)
+        {
+            // FindByIdempotentIdAsync reads AsNoTracking, so each attempt observes newly-committed data.
+            var sent = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
+            if (sent is not null && sent.IsComplete)
+                return sent;
+
+            if (attempt >= maxAttempts)
+                throw new InvalidOperationException(
+                    $"SpiSentMsg not found or incomplete for IdempotentId={idempotentId} MsgType={msgType} " +
+                    $"after {attempt} attempt(s). Cannot transform response for System B. Routing to DLQ.");
+
+            var delay = ComputeBackoff(attempt);
+            _logger.LogWarning(
+                "SystemA inbound: sent row not ready for IdempotentId={Id} MsgType={Type} " +
+                "(attempt {Attempt}/{Max}); retrying in {DelayMs}ms.",
+                idempotentId, msgType, attempt, maxAttempts, delay.TotalMilliseconds);
+            await Task.Delay(delay, _timeProvider, ct);
+        }
+    }
+
+    private TimeSpan ComputeBackoff(int attempt)
+    {
+        // attempt is 1-based; the first inter-attempt wait uses InitialDelayMs.
+        var raw = _retry.InitialDelayMs * Math.Pow(_retry.BackoffMultiplier, attempt - 1);
+        var capped = Math.Min(raw, _retry.MaxDelayMs);
+        return TimeSpan.FromMilliseconds(Math.Max(0, capped));
     }
 }

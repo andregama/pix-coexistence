@@ -1,6 +1,7 @@
 using ConvivenciaPix.Application;
 using ConvivenciaPix.Infrastructure;
 using ConvivenciaPix.Infrastructure.Metrics;
+using ConvivenciaPix.Application.UseCases.CorrelateMessages;
 using ConvivenciaPix.SpiCorrelateWorker;
 using ConvivenciaPix.SpiCorrelateWorker.Consumers;
 using Microsoft.Extensions.Hosting;
@@ -10,6 +11,8 @@ using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<CorrelationOptions>(builder.Configuration.GetSection("Correlation"));
+builder.Services.Configure<CorrelateInboundRetryOptions>(
+    builder.Configuration.GetSection("Correlation:Retry"));
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddHostedService<SystemACdcCorrelateConsumer>();

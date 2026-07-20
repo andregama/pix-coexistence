@@ -5,6 +5,7 @@ using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Domain.Repositories;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using System.Text;
 using System.Text.Json;
@@ -38,12 +39,22 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Returns((string?)null);
         _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("MSG-1");
 
+        // Small attempt budget with zero delay keeps the retry-path tests instant.
+        var retryOptions = Options.Create(new CorrelateInboundRetryOptions
+        {
+            MaxAttempts = 3,
+            InitialDelayMs = 0,
+            MaxDelayMs = 0,
+        });
+
         _sut = new CorrelateSystemAInboundUseCase(
             _receivedRepoMock.Object,
             _sentRepoMock.Object,
             _xmlParserMock.Object,
             _transformerMock.Object,
             _publisherMock.Object,
+            retryOptions,
+            TimeProvider.System,
             NullLogger<CorrelateSystemAInboundUseCase>.Instance);
     }
 
@@ -98,8 +109,44 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, CancellationToken.None))
             .Should().ThrowAsync<InvalidOperationException>();
 
+        // The lookup is retried up to MaxAttempts (3) before giving up to the DLQ.
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
         _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RetriesThenSucceeds_WhenSentRowCompletesLate()
+    {
+        var incomplete = SpiSentMsg.Create("E2E-A", "pacs.008");
+        incomplete.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null); // B side not persisted yet
+
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+
+        // Simulates the race: row absent, then present-but-incomplete, then complete on the 3rd read.
+        _sentRepoMock.SetupSequence(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiSentMsg?)null)
+            .ReturnsAsync(incomplete)
+            .ReturnsAsync(CompleteSentMsg());
+
+        _transformerMock
+            .Setup(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"))
+            .Returns("<pacs002-transformed/>");
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(CdcJson, AllowedTypes, CancellationToken.None);
+
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+        _transformerMock.Verify(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"), Times.Once);
+        published.Should().NotBeNull("the response must be delivered once the sent row completes");
     }
 
     [Fact]
