@@ -29,12 +29,16 @@ public sealed class DinamoHsmService : IHsmService
 
     public Task<string> SignXmlAsync(string unsignedXml, CancellationToken cancellationToken = default)
     {
+        // Bacen responses arrive already signed; the HSM's SignPIX envelops internally, so strip any
+        // existing <Signature> here to avoid delivering a double-signed envelope.
+        var toSign = EnvelopedXmlSigner.StripSignatures(unsignedXml);
+
         _logger.LogHsmConnect(_options.Host, _options.Port);
         _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
         try
         {
-            var signed = _sdk.SignPIX(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(unsignedXml));
-            _logger.LogHsmSigned(_options.KeyId, unsignedXml.Length, signed.Length);
+            var signed = _sdk.SignPIX(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
+            _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
             return Task.FromResult(Encoding.UTF8.GetString(signed));
         }
         finally

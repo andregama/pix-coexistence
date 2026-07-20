@@ -166,7 +166,8 @@ public sealed class SpiFlowTests
 
         body.Should().NotBeNull("the errored response must be delivered to System B");
         body!.Should().Contain("RJCT", "the Bacen rejection status must be propagated");
-        body.Should().Contain("Signature");
+        CountSignatures(body!).Should().Be(1,
+            "the pre-existing Bacen signature must be stripped and replaced, not appended to");
         // Transformed to System B's identifier.
         body.Should().Contain($"<OrgnlEndToEndId>{systemBE2e}</OrgnlEndToEndId>");
     }
@@ -370,6 +371,8 @@ public sealed class SpiFlowTests
         </Document>
         """;
 
+    // Mirrors a real Bacen inbound: the response already carries Bacen's XML-DSig <Signature>. The
+    // proxy must strip it before re-signing, so the delivered envelope has exactly one signature.
     private static string BuildPacs002Xml(string messageId, string orgnlEndToEndId, string? txSts = null) => $"""
         <Document>
             <FIToFIPmtStsRpt>
@@ -381,8 +384,16 @@ public sealed class SpiFlowTests
                     <Cdtr><Nm>PAYEE-{orgnlEndToEndId}</Nm></Cdtr>
                 </TxInfAndSts>
             </FIToFIPmtStsRpt>
+            <Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo/><SignatureValue>BACEN-{messageId}</SignatureValue></Signature>
         </Document>
         """;
+
+    private static int CountSignatures(string xml)
+    {
+        var doc = new System.Xml.XmlDocument();
+        doc.LoadXml(xml);
+        return doc.GetElementsByTagName("Signature", "http://www.w3.org/2000/09/xmldsig#").Count;
+    }
 
     private static string BuildPibr001Xml(string frIspb, string toIspb, string data)
     {

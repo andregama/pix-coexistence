@@ -1,6 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
 using System.Xml;
+using System.Linq;
 
 namespace ConvivenciaPix.Infrastructure.Signing;
 
@@ -15,6 +16,10 @@ internal static class EnvelopedXmlSigner
 {
     public static string Sign(string unsignedXml, X509Certificate2 certificate)
     {
+        // Bacen responses arrive already signed; strip any existing signature so we never emit an
+        // envelope with two <Signature> elements (see StripSignatures).
+        unsignedXml = StripSignatures(unsignedXml);
+
         var xmlDoc = new XmlDocument { PreserveWhitespace = true };
         xmlDoc.LoadXml(unsignedXml);
 
@@ -45,6 +50,29 @@ internal static class EnvelopedXmlSigner
             sgntr.AppendChild(imported);
         else
             xmlDoc.DocumentElement!.AppendChild(imported);
+
+        return xmlDoc.OuterXml;
+    }
+
+    /// <summary>
+    /// Removes every XML-DSig <c>&lt;Signature&gt;</c> element from the envelope, leaving the
+    /// containing <c>&lt;Sgntr&gt;</c> element in place so a fresh signature can be inserted. Used to
+    /// clear a pre-existing Bacen signature before re-signing a response for System B. Returns the
+    /// input unchanged (no reserialization) when there is nothing to remove, so unsigned envelopes
+    /// such as the pibr.002 echo (empty <c>&lt;Sgntr/&gt;</c>) stay byte-identical.
+    /// </summary>
+    public static string StripSignatures(string xml)
+    {
+        var xmlDoc = new XmlDocument { PreserveWhitespace = true };
+        xmlDoc.LoadXml(xml);
+
+        var signatureNodes = xmlDoc.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl);
+        if (signatureNodes.Count == 0)
+            return xml;
+
+        // Snapshot first: GetElementsByTagName returns a live list that mutates as we remove nodes.
+        foreach (var node in signatureNodes.Cast<XmlNode>().ToList())
+            node.ParentNode?.RemoveChild(node);
 
         return xmlDoc.OuterXml;
     }
