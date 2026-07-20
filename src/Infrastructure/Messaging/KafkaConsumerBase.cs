@@ -54,6 +54,11 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
                     continue;
 
                 await ProcessMessageAsync(result, stoppingToken);
+
+                // Consumers run with EnableAutoCommit=false, so the offset is only durable once we
+                // commit it here — after the message is fully processed (at-least-once). Without this
+                // commit, a pod restart re-reads every retained message and produces duplicates.
+                Commit(result);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -69,7 +74,12 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
             catch (Exception ex)
             {
                 if (result is not null)
+                {
                     await RouteToDlqAsync(result, ex, stoppingToken);
+                    // The message is handled (parked in the DLQ); commit past it so a restart does
+                    // not reprocess and re-dead-letter the same poison message.
+                    Commit(result);
+                }
                 else
                     _logger.LogUnroutedError(_topic, ex);
             }
@@ -81,6 +91,22 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
     protected abstract Task ProcessMessageAsync(
         ConsumeResult<TKey, TValue> result,
         CancellationToken cancellationToken);
+
+    private void Commit(ConsumeResult<TKey, TValue> result)
+    {
+        try
+        {
+            // Commits result.Offset + 1 for the message's partition.
+            _consumer.Commit(result);
+        }
+        catch (KafkaException ex)
+        {
+            // A failed commit is non-fatal: the message stays uncommitted and may be reprocessed
+            // (at-least-once), which downstream idempotency (MessageId) absorbs. Do not re-throw —
+            // the loop must keep draining the partition.
+            _logger.LogCommitError(_topic, result.TopicPartitionOffset.ToString(), ex.Error.Reason);
+        }
+    }
 
     private async Task RouteToDlqAsync(
         ConsumeResult<TKey, TValue> original,
@@ -140,6 +166,9 @@ internal static partial class KafkaConsumerBaseLogMessages
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Kafka consume error on topic {Topic}: [{ErrorCode}] {Reason}")]
     public static partial void LogConsumeError(this ILogger logger, string topic, ErrorCode errorCode, string reason);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Kafka offset commit failed on topic {Topic} at {Offset}: {Reason}. Message may be reprocessed.")]
+    public static partial void LogCommitError(this ILogger logger, string topic, string offset, string reason);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Routing message from {SourceTopic} to DLQ {DlqTopic} at offset {Offset}. Exception: {ExceptionType} - {ExceptionMessage}")]
     public static partial void LogDlqRouted(this ILogger logger, string sourceTopic, string dlqTopic, string offset, string exceptionType, string exceptionMessage);
