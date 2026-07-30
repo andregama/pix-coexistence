@@ -1,4 +1,4 @@
-.PHONY: infra-up infra-down migrate test lint run-api
+.PHONY: infra-up infra-down migrate test lint run-api run-dict-api
 
 SQL_HOST     ?= localhost,1433
 SQL_USER     ?= sa
@@ -32,3 +32,6 @@ lint:
 
 run-api:
 	dotnet run --project src/SpiProxyApi/ConvivenciaPix.SpiProxyApi.csproj
+
+run-dict-api:
+	dotnet run --project src/DictProxyApi/ConvivenciaPix.DictProxyApi.csproj

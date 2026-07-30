@@ -49,6 +49,21 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
         return EnvelopedXmlSigner.Verify(signedEnvelope, _certificate!);
     }
 
+    public byte[] SignPIXDict(string keyId, string certId, byte[] unsignedMessage)
+    {
+        EnsureConnected();
+        // DICT uses a root-enveloped signature; EnvelopedXmlSigner.Sign falls back to the document
+        // root when no AppHdr/Sgntr is present, matching the DICT profile in software.
+        var signedXml = EnvelopedXmlSigner.Sign(Encoding.UTF8.GetString(unsignedMessage), _certificate!);
+        return Encoding.UTF8.GetBytes(signedXml);
+    }
+
+    public bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage)
+    {
+        EnsureConnected();
+        return EnvelopedXmlSigner.Verify(Encoding.UTF8.GetString(signedMessage), _certificate!);
+    }
+
     public void Disconnect()
     {
         _connected = false;

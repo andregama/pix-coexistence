@@ -60,6 +60,41 @@ public sealed class DinamoHsmService : IHsmService
             _sdk.Disconnect();
         }
     }
+
+    public Task<string> SignDictXmlAsync(string unsignedXml, CancellationToken cancellationToken = default)
+    {
+        // DICT messages arrive already signed (by System B, or by Bacen on the response); the HSM's
+        // SignPIXDict envelops internally, so strip any existing <Signature> to avoid a double sign.
+        var toSign = EnvelopedXmlSigner.StripSignatures(unsignedXml);
+
+        _logger.LogHsmConnect(_options.Host, _options.Port);
+        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
+        try
+        {
+            var signed = _sdk.SignPIXDict(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
+            _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
+            return Task.FromResult(Encoding.UTF8.GetString(signed));
+        }
+        finally
+        {
+            _sdk.Disconnect();
+        }
+    }
+
+    public Task<bool> VerifyDictXmlAsync(string signedXml, CancellationToken cancellationToken = default)
+    {
+        _logger.LogHsmConnect(_options.Host, _options.Port);
+        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
+        try
+        {
+            return Task.FromResult(
+                _sdk.VerifyPIXDict(_options.ChainId, _options.Crl, Encoding.UTF8.GetBytes(signedXml)));
+        }
+        finally
+        {
+            _sdk.Disconnect();
+        }
+    }
 }
 
 internal static partial class DinamoHsmServiceLogMessages

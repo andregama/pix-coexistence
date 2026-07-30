@@ -13,4 +13,14 @@ public interface IHsmService
 
     /// <summary>Verifies the signature on a signed PIX/SPI envelope.</summary>
     Task<bool> VerifyXmlAsync(string signedXml, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Signs a DICT message and returns the signed XML. DICT bodies have no BAH/AppHdr, so the
+    /// signature is enveloped at the document root — the HSM uses its dedicated DICT operation
+    /// (Dinamo SignPIXDict), distinct from the SPI envelope signing above.
+    /// </summary>
+    Task<string> SignDictXmlAsync(string unsignedXml, CancellationToken cancellationToken = default);
+
+    /// <summary>Verifies the signature on a signed DICT message.</summary>
+    Task<bool> VerifyDictXmlAsync(string signedXml, CancellationToken cancellationToken = default);
 }

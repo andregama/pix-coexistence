@@ -61,6 +61,7 @@ src/
 ├── Application/               # Use cases, DTOs, application interfaces
 ├── Infrastructure/            # EF Core, Kafka, Redis, HSM, XML signing, metrics
 ├── SpiProxyApi/               # ASP.NET Core — Bacen SPI emulator
+├── DictProxyApi/              # ASP.NET Core — DICT re-signing forward proxy (calls the real DICT API)
 ├── SpiCorrelateWorker/        # Worker — idempotency-key correlation, response transformation, pibr Echo generation
 ├── SpiProxyWorker/            # Worker — signs transformed responses and enqueues them for System B to pull
 └── SpiComparisonEngine/       # Worker — field-level comparison and discrepancy logging
@@ -69,8 +70,28 @@ tests/
 ├── ConvivenciaPix.Domain.Tests/          # Pure unit tests
 ├── ConvivenciaPix.Application.Tests/    # Use-case unit tests with Moq
 ├── ConvivenciaPix.Infrastructure.Tests/ # Repository, cache, parser, signing, transformer (Testcontainers)
-└── ConvivenciaPix.Integration.Tests/    # Full pipeline E2E (Testcontainers)
+├── ConvivenciaPix.Integration.Tests/    # Full SPI pipeline E2E (Testcontainers)
+└── ConvivenciaPix.DictProxyApi.Tests/   # DICT proxy E2E (WireMock stub of the real DICT API)
 ```
+
+### DICT proxy (`DictProxyApi`)
+
+Unlike the SPI proxy — which *emulates* Bacen and never calls a real Bacen API — the **DICT proxy
+calls the real Bacen DICT API** so System B can be homologated end-to-end while reusing its SPI
+homologation certificates. It is a transparent, stateless reverse proxy:
+
+1. System B sends a (signed) DICT message to the proxy over mTLS.
+2. The proxy strips the existing signature and **re-signs the request** with the bank's HSM DICT
+   identity (Dinamo `SignPIXDict`, via `IHsmService.SignDictXmlAsync`).
+3. It forwards the request to the real DICT API over mTLS, presenting the bank's ICP-Brasil client
+   certificate — **HSM-backed** in Production (Dinamo CNG KSP, key never leaves the HSM), a local
+   PFX in Dev/Staging.
+4. It strips Bacen's signature from the response, **re-signs it**, and returns it to System B.
+
+A single catch-all route (`{**path}`) forwards any method/path/query, so all DICT operations
+(CreateEntry, GetEntry, Claims, Infractions, …) are handled with no per-operation code. Configure it
+via the `DictProxy` section (`BaseUrl`, `TimeoutSeconds`, and the client-certificate settings). Run
+it with `make run-dict-api`.
 
 ---
 
@@ -150,9 +171,13 @@ Zero warnings expected. The solution uses Central Package Management (`Directory
 ```bash
 dotnet test tests/ConvivenciaPix.Domain.Tests/ConvivenciaPix.Domain.Tests.csproj
 dotnet test tests/ConvivenciaPix.Application.Tests/ConvivenciaPix.Application.Tests.csproj
+dotnet test tests/ConvivenciaPix.DictProxyApi.Tests/ConvivenciaPix.DictProxyApi.Tests.csproj
 ```
 
-These cover all domain entities, value objects, and application use cases via Moq mocks. Runs in under 5 seconds.
+These cover all domain entities, value objects, and application use cases via Moq mocks. The DICT
+proxy E2E tests host the API with `WebApplicationFactory<Program>` and use an in-process **WireMock**
+server to stub the real DICT API (no Docker), asserting the request and response are re-signed in
+both directions. Runs in under 5 seconds.
 
 ### Infrastructure tests (Docker required)
 

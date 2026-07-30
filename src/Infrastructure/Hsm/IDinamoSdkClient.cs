@@ -28,6 +28,21 @@ public interface IDinamoSdkClient
     /// </summary>
     bool VerifyPIX(string chainId, string crl, string signedEnvelope);
 
+    /// <summary>
+    /// Signs an unsigned DICT message with the private key <paramref name="keyId"/> and certificate
+    /// <paramref name="certId"/>, returning the signed message bytes. DICT uses a different signature
+    /// profile from SPI (root-enveloped, no BAH/Sgntr). Equivalent to
+    /// DinamoClient.SignPIXDict(keyId, certId, unsignedMessage).
+    /// </summary>
+    byte[] SignPIXDict(string keyId, string certId, byte[] unsignedMessage);
+
+    /// <summary>
+    /// Verifies the signature on a signed DICT message against the certificate chain
+    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/>.
+    /// Equivalent to DinamoClient.VerifyPIXDict(chainId, crl, signedMessage).
+    /// </summary>
+    bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage);
+
     /// <summary>Closes the HSM session and releases the connection.</summary>
     void Disconnect();
 }

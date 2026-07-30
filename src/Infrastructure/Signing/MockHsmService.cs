@@ -33,6 +33,12 @@ public sealed class MockHsmService : IHsmService
     public Task<bool> VerifyXmlAsync(string signedXml, CancellationToken cancellationToken = default) =>
         Task.FromResult(EnvelopedXmlSigner.Verify(signedXml, GetCertificate()));
 
+    public Task<string> SignDictXmlAsync(string unsignedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(EnvelopedXmlSigner.Sign(unsignedXml, GetCertificate()));
+
+    public Task<bool> VerifyDictXmlAsync(string signedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(EnvelopedXmlSigner.Verify(signedXml, GetCertificate()));
+
     private X509Certificate2 GetCertificate()
     {
         if (_cachedCert is null)
