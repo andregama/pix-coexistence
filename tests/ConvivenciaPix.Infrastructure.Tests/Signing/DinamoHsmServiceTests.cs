@@ -59,4 +59,48 @@ public sealed class DinamoHsmServiceTests
         ok.Should().BeTrue();
         _sdk.Verify(s => s.Disconnect(), Times.Once);
     }
+
+    [Fact]
+    public async Task SignDictXmlAsync_UsesSignPIXDict_WithConfiguredIds()
+    {
+        var sequence = new List<string>();
+        _sdk.Setup(s => s.Connect("hsm.local", 4433, "u", "p")).Callback(() => sequence.Add("connect"));
+        _sdk.Setup(s => s.SignPIXDict("key-1", "cert-1", It.IsAny<byte[]>()))
+            .Callback(() => sequence.Add("sign"))
+            .Returns(Encoding.UTF8.GetBytes("<signed-dict/>"));
+        _sdk.Setup(s => s.Disconnect()).Callback(() => sequence.Add("disconnect"));
+
+        var result = await BuildSut().SignDictXmlAsync("<unsigned/>", CancellationToken.None);
+
+        result.Should().Be("<signed-dict/>");
+        sequence.Should().Equal("connect", "sign", "disconnect");
+        // SPI signing must not be used for DICT messages.
+        _sdk.Verify(s => s.SignPIX(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<byte[]>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SignDictXmlAsync_StripsExistingSignature_BeforeSigning()
+    {
+        byte[]? captured = null;
+        _sdk.Setup(s => s.SignPIXDict("key-1", "cert-1", It.IsAny<byte[]>()))
+            .Callback<string, string, byte[]>((_, _, bytes) => captured = bytes)
+            .Returns(Encoding.UTF8.GetBytes("<signed-dict/>"));
+
+        const string signed =
+            "<Msg xmlns:d=\"http://www.w3.org/2000/09/xmldsig#\"><d:Signature><d:X/></d:Signature></Msg>";
+        await BuildSut().SignDictXmlAsync(signed, CancellationToken.None);
+
+        Encoding.UTF8.GetString(captured!).Should().NotContain("Signature");
+    }
+
+    [Fact]
+    public async Task VerifyDictXmlAsync_UsesVerifyPIXDict_WithChainAndCrl()
+    {
+        _sdk.Setup(s => s.VerifyPIXDict("chain-1", "crl-1", It.IsAny<byte[]>())).Returns(true);
+
+        var ok = await BuildSut().VerifyDictXmlAsync("<signed-dict/>", CancellationToken.None);
+
+        ok.Should().BeTrue();
+        _sdk.Verify(s => s.Disconnect(), Times.Once);
+    }
 }

@@ -28,6 +28,12 @@ public sealed class DinamoNetSdkClient : IDinamoSdkClient, IDisposable
     public bool VerifyPIX(string chainId, string crl, string signedEnvelope) =>
         Client.VerifyPIX(chainId, crl, signedEnvelope);
 
+    public byte[] SignPIXDict(string keyId, string certId, byte[] unsignedMessage) =>
+        Client.SignPIXDict(keyId, certId, unsignedMessage);
+
+    public bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage) =>
+        Client.VerifyPIXDict(chainId, crl, signedMessage);
+
     public void Disconnect()
     {
         _client?.Disconnect();

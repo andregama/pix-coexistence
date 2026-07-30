@@ -16,8 +16,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Quartz;
 using StackExchange.Redis;
+using System.Security.Cryptography.X509Certificates;
 
 namespace ConvivenciaPix.Infrastructure;
 
@@ -58,6 +60,7 @@ public static class InfrastructureServiceExtensions
 
         AddHsmServices(services, configuration, environment);
         AddCertificateValidator(services, configuration, environment);
+        AddDictProxyServices(services, configuration, environment);
         AddKafkaProducer(services);
 
         services.AddSingleton<IKafkaPublisher, KafkaPublisher>();
@@ -99,6 +102,81 @@ public static class InfrastructureServiceExtensions
             services.AddSingleton<ICertificateValidator, DevCertificateValidator>();
         else
             services.AddSingleton<ICertificateValidator, BacenCertificateValidator>();
+    }
+
+    /// <summary>
+    /// Lean registration for the DICT proxy API. Unlike <see cref="AddInfrastructure"/>, it wires no
+    /// database, Redis, Kafka, or scheduled jobs — the DICT proxy is a stateless signing forward
+    /// proxy. It registers only metrics, the HSM signing services, the inbound certificate validator
+    /// (for mTLS client-cert auth), and the outbound DICT forwarder + client-certificate provider.
+    /// </summary>
+    public static IServiceCollection AddDictInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IHostEnvironment environment)
+    {
+        var spiMetrics = new SpiMetrics();
+        services.AddSingleton<ISpiMetrics>(spiMetrics);
+        services.AddSingleton(spiMetrics);
+
+        AddHsmServices(services, configuration, environment);
+        AddCertificateValidator(services, configuration, environment);
+        AddDictProxyServices(services, configuration, environment);
+
+        return services;
+    }
+
+    private static void AddDictProxyServices(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        services.Configure<DictProxyOptions>(configuration.GetSection("DictProxy"));
+
+        // The outbound mTLS client certificate: HSM-backed (CNG KSP) in Production, local PFX
+        // otherwise — mirroring the HSM signing service environment switch.
+        if (environment.IsProduction())
+            services.AddSingleton<IDictClientCertificateProvider, HsmBackedClientCertificateProvider>();
+        else
+            services.AddSingleton<IDictClientCertificateProvider, PfxClientCertificateProvider>();
+
+        services.AddHttpClient<IDictForwarder, DictForwarder>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<DictProxyOptions>>().Value;
+            if (string.IsNullOrWhiteSpace(options.BaseUrl))
+                throw new InvalidOperationException("DictProxy:BaseUrl is required for the DICT proxy.");
+
+            var baseUrl = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
+            client.BaseAddress = new Uri(baseUrl);
+            // The standard resilience handler owns timeouts (retry-aware); disable the ambient one.
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        })
+        .ConfigurePrimaryHttpMessageHandler(sp =>
+        {
+            var handler = new SocketsHttpHandler();
+            var options = sp.GetRequiredService<IOptions<DictProxyOptions>>().Value;
+
+            // Present the bank's client certificate for mTLS only against real (https) DICT targets;
+            // local http stubs used in tests need no client certificate.
+            if (options.BaseUrl.StartsWith("https", StringComparison.OrdinalIgnoreCase))
+            {
+                var certProvider = sp.GetRequiredService<IDictClientCertificateProvider>();
+                handler.SslOptions.ClientCertificates =
+                    new X509CertificateCollection { certProvider.GetClientCertificate() };
+            }
+
+            return handler;
+        })
+        .AddStandardResilienceHandler(resilience =>
+        {
+            var timeoutSeconds = configuration.GetValue("DictProxy:TimeoutSeconds", 30);
+            var total = TimeSpan.FromSeconds(timeoutSeconds);
+            resilience.TotalRequestTimeout.Timeout = total;
+            // TotalRequestTimeout must be >= AttemptTimeout, and SamplingDuration >= 2 * AttemptTimeout.
+            if (resilience.AttemptTimeout.Timeout > total)
+                resilience.AttemptTimeout.Timeout = total;
+            var minSampling = resilience.AttemptTimeout.Timeout * 2;
+            if (resilience.CircuitBreaker.SamplingDuration < minSampling)
+                resilience.CircuitBreaker.SamplingDuration = minSampling;
+        });
     }
 
     private static void AddKafkaProducer(IServiceCollection services)

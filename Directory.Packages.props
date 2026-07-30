@@ -81,5 +81,6 @@
     <PackageVersion Include="Testcontainers.MsSql" Version="3.10.0" />
     <PackageVersion Include="Testcontainers.Kafka" Version="3.10.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="3.10.0" />
+    <PackageVersion Include="WireMock.Net" Version="1.6.7" />
   </ItemGroup>
 </Project>
