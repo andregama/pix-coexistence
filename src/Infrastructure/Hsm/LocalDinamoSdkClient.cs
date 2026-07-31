@@ -1,68 +1,46 @@
 using ConvivenciaPix.Infrastructure.Signing;
+using Microsoft.Extensions.Options;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace ConvivenciaPix.Infrastructure.Hsm;
 
 /// <summary>
-/// .NET BCL implementation of IDinamoSdkClient — no native HSM library dependency.
-/// Simulates the Dinamo HSM by loading a local PFX file and performing the PIX enveloped signature
-/// in software via <see cref="EnvelopedXmlSigner"/>. Used in the Staging environment.
-/// In Production, DinamoNetSdkClient (wrapping the real Dinamo.Hsm.DinamoClient) is registered
-/// instead, following the same IDinamoSdkClient contract.
+/// .NET BCL implementation of IDinamoSdkClient — no native HSM library dependency. Simulates the
+/// Dinamo HSM by loading a local PFX file and performing the PIX enveloped signature in software via
+/// <see cref="EnvelopedXmlSigner"/>; outbound PIX HTTP is a software mTLS call presenting the PFX.
+/// Used in the Staging environment. In Production, DinamoNetSdkClient (wrapping the real
+/// Dinamo.Hsm.DinamoClient) is registered instead, following the same contract.
 ///
+/// The certificate is loaded once, lazily and thread-safely; every operation is self-contained and
+/// stateless, so the single registered instance is safe to use concurrently.
 /// PFX path = DinamoOptions.Host (reused as a file path in this implementation).
 /// </summary>
 public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
 {
-    private X509Certificate2? _certificate;
-    private bool _connected;
+    private readonly Lazy<X509Certificate2> _certificate;
 
-    public void Connect(string host, int port, string userId, string password)
+    public LocalDinamoSdkClient(IOptions<DinamoOptions> options)
     {
-        // In this local implementation, "host" is the path to a PFX file.
-        // Password maps to the PFX password; userId is ignored (no HSM user concept locally).
-        if (!File.Exists(host))
-            throw new FileNotFoundException(
-                $"LocalDinamoSdkClient: PFX file not found at '{host}'. " +
-                "Set Dinamo:Host to a valid PFX file path for Staging.", host);
-
-        _certificate = new X509Certificate2(host, password, X509KeyStorageFlags.Exportable);
-        if (_certificate.GetRSAPrivateKey() is null)
-            throw new InvalidOperationException(
-                $"LocalDinamoSdkClient: PFX at '{host}' does not contain an RSA private key.");
-
-        _connected = true;
+        var opts = options.Value;
+        _certificate = new Lazy<X509Certificate2>(
+            () => LoadCertificate(opts.Host, opts.Password),
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
-    public byte[] SignPIX(string keyId, string certId, byte[] unsignedEnvelope)
-    {
-        EnsureConnected();
-        // Labels are ignored in local mode — the loaded PFX contains exactly one key/cert.
-        var signedXml = EnvelopedXmlSigner.Sign(Encoding.UTF8.GetString(unsignedEnvelope), _certificate!);
-        return Encoding.UTF8.GetBytes(signedXml);
-    }
+    public byte[] SignPIX(string keyId, string certId, byte[] unsignedEnvelope) =>
+        Encoding.UTF8.GetBytes(EnvelopedXmlSigner.Sign(Encoding.UTF8.GetString(unsignedEnvelope), _certificate.Value));
 
-    public bool VerifyPIX(string chainId, string crl, string signedEnvelope)
-    {
-        EnsureConnected();
-        return EnvelopedXmlSigner.Verify(signedEnvelope, _certificate!);
-    }
+    public bool VerifyPIX(string chainId, string? crl, string signedEnvelope) =>
+        EnvelopedXmlSigner.Verify(signedEnvelope, _certificate.Value);
 
-    public byte[] SignPIXDict(string keyId, string certId, byte[] unsignedMessage)
-    {
-        EnsureConnected();
+    public byte[] SignPIXDict(string keyId, string certId, byte[] unsignedMessage) =>
         // DICT uses a root-enveloped signature; EnvelopedXmlSigner.Sign falls back to the document
         // root when no AppHdr/Sgntr is present, matching the DICT profile in software.
-        var signedXml = EnvelopedXmlSigner.Sign(Encoding.UTF8.GetString(unsignedMessage), _certificate!);
-        return Encoding.UTF8.GetBytes(signedXml);
-    }
+        Encoding.UTF8.GetBytes(EnvelopedXmlSigner.Sign(Encoding.UTF8.GetString(unsignedMessage), _certificate.Value));
 
-    public bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage)
-    {
-        EnsureConnected();
-        return EnvelopedXmlSigner.Verify(Encoding.UTF8.GetString(signedMessage), _certificate!);
-    }
+    public bool VerifyPIXDict(string chainId, string? crl, byte[] signedMessage) =>
+        EnvelopedXmlSigner.Verify(Encoding.UTF8.GetString(signedMessage), _certificate.Value);
 
     public PixHttpResponse SendPix(
         PixHttpMethod method,
@@ -76,13 +54,11 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
         bool useGzip,
         bool verifyHostName)
     {
-        EnsureConnected();
-
         // Software mTLS: present the loaded PFX as the client certificate for https targets, mirroring
-        // what the HSM does with its stored key/cert in Production. Labels are ignored locally.
+        // what the HSM does with its stored key/cert in Production.
         using var handler = new HttpClientHandler();
         if (url.StartsWith("https", StringComparison.OrdinalIgnoreCase))
-            handler.ClientCertificates.Add(_certificate!);
+            handler.ClientCertificates.Add(_certificate.Value);
 
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
 
@@ -98,7 +74,12 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
         using var request = new HttpRequestMessage(httpMethod, url);
         HttpContent? content = null;
         if (method is PixHttpMethod.Post or PixHttpMethod.Put)
-            content = new ByteArrayContent(body);
+        {
+            var payload = useGzip && body.Length > 0 ? PixGzip.Compress(body) : body;
+            content = new ByteArrayContent(payload);
+            if (useGzip && body.Length > 0)
+                content.Headers.ContentEncoding.Add("gzip");
+        }
 
         foreach (var header in requestHeaders)
         {
@@ -130,6 +111,21 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
             responseBody);
     }
 
+    private static X509Certificate2 LoadCertificate(string pfxPath, string password)
+    {
+        if (!File.Exists(pfxPath))
+            throw new FileNotFoundException(
+                $"LocalDinamoSdkClient: PFX file not found at '{pfxPath}'. " +
+                "Set Dinamo:Host to a valid PFX file path for Staging.", pfxPath);
+
+        var certificate = new X509Certificate2(pfxPath, password, X509KeyStorageFlags.Exportable);
+        if (certificate.GetRSAPrivateKey() is null)
+            throw new InvalidOperationException(
+                $"LocalDinamoSdkClient: PFX at '{pfxPath}' does not contain an RSA private key.");
+
+        return certificate;
+    }
+
     private static byte[] ReadBody(HttpContent content)
     {
         using var stream = content.ReadAsStream();
@@ -138,19 +134,9 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
         return ms.ToArray();
     }
 
-    public void Disconnect()
+    public void Dispose()
     {
-        _connected = false;
-        _certificate?.Dispose();
-        _certificate = null;
-    }
-
-    public void Dispose() => Disconnect();
-
-    private void EnsureConnected()
-    {
-        if (!_connected)
-            throw new InvalidOperationException(
-                "LocalDinamoSdkClient: Connect() must be called before using the client.");
+        if (_certificate.IsValueCreated)
+            _certificate.Value.Dispose();
     }
 }

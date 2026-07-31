@@ -1,19 +1,18 @@
 namespace ConvivenciaPix.Infrastructure.Hsm;
 
 /// <summary>
-/// Mirrors the DinamoAPI.NET (Dinamo.Hsm) contract for the PIX/SPI signing operations used by
-/// this solution. Implementations:
+/// Mirrors the DinamoAPI.NET (Dinamo.Hsm) contract for the PIX/SPI operations used by this solution.
+/// Implementations:
 ///   - LocalDinamoSdkClient: .NET BCL only — no native HSM library required. Used in Staging.
 ///   - DinamoNetSdkClient:   wraps the real Dinamo.Hsm.DinamoClient. Used in Production.
 ///
-/// The HSM signs the whole envelope internally (SignPIX) and validates it (VerifyPIX); keys and
-/// certificates are referenced by label and never leave the HSM.
+/// Each operation is self-contained and thread-safe: implementations own their HSM session lifecycle
+/// (Dinamo sessions have thread-session affinity and must not be shared across threads simultaneously),
+/// so callers simply invoke an operation and never manage Connect/Disconnect. The HSM signs and
+/// verifies internally; keys and certificates are referenced by label and never leave the HSM.
 /// </summary>
 public interface IDinamoSdkClient
 {
-    /// <summary>Opens an authenticated session to the HSM.</summary>
-    void Connect(string host, int port, string userId, string password);
-
     /// <summary>
     /// Signs the unsigned PIX/SPI envelope with the private key <paramref name="keyId"/> and
     /// certificate <paramref name="certId"/>, returning the signed envelope bytes.
@@ -23,10 +22,10 @@ public interface IDinamoSdkClient
 
     /// <summary>
     /// Verifies the signature on <paramref name="signedEnvelope"/> against the certificate chain
-    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/>.
+    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/> (null when none).
     /// Equivalent to DinamoClient.VerifyPIX(chainId, crl, signedEnvelope).
     /// </summary>
-    bool VerifyPIX(string chainId, string crl, string signedEnvelope);
+    bool VerifyPIX(string chainId, string? crl, string signedEnvelope);
 
     /// <summary>
     /// Signs an unsigned DICT message with the private key <paramref name="keyId"/> and certificate
@@ -38,18 +37,20 @@ public interface IDinamoSdkClient
 
     /// <summary>
     /// Verifies the signature on a signed DICT message against the certificate chain
-    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/>.
+    /// <paramref name="chainId"/> and revocation list <paramref name="crl"/> (null when none).
     /// Equivalent to DinamoClient.VerifyPIXDict(chainId, crl, signedMessage).
     /// </summary>
-    bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage);
+    bool VerifyPIXDict(string chainId, string? crl, byte[] signedMessage);
 
     /// <summary>
     /// Performs an mTLS HTTP request to the DICT API through the HSM. The HSM owns the TLS handshake
     /// and presents the client certificate <paramref name="certId"/> / key <paramref name="keyId"/>
     /// (referenced by label, never leaving the HSM), validating the server against
     /// <paramref name="serverCertChainId"/>. Equivalent to DinamoClient.postPIX/putPIX/getPIX/deletePIX
-    /// followed by getPIXHTTPReqCode()/getPIXHTTPReqDetails() on the same session.
+    /// followed by getPIXHTTPReqCode()/getPIXHTTPReqDetails() on the same session (executed atomically
+    /// on one leased session so the status read cannot interleave with another request).
     /// <paramref name="requestHeaders"/> entries are formatted "Name: Value" (no CRLF).
+    /// <paramref name="timeoutSeconds"/> is expressed in seconds (converted to the SDK's millisecond unit).
     /// </summary>
     PixHttpResponse SendPix(
         PixHttpMethod method,
@@ -62,7 +63,4 @@ public interface IDinamoSdkClient
         int timeoutSeconds,
         bool useGzip,
         bool verifyHostName);
-
-    /// <summary>Closes the HSM session and releases the connection.</summary>
-    void Disconnect();
 }

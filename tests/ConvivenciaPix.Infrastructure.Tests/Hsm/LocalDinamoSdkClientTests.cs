@@ -1,5 +1,6 @@
 using ConvivenciaPix.Infrastructure.Hsm;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -19,6 +20,9 @@ public sealed class LocalDinamoSdkClientTests : IDisposable
         File.WriteAllBytes(_pfxPath, cert.Export(X509ContentType.Pfx));
     }
 
+    private LocalDinamoSdkClient BuildSut(string? pfxPath = null) =>
+        new(Options.Create(new DinamoOptions { Host = pfxPath ?? _pfxPath, Password = "" }));
+
     private const string Envelope = """
         <Envelope xmlns="https://www.bcb.gov.br/pi/pibr.002/1.3">
           <AppHdr><MsgDefIdr>pibr.002.spi.1.3</MsgDefIdr><Sgntr/></AppHdr>
@@ -29,29 +33,33 @@ public sealed class LocalDinamoSdkClientTests : IDisposable
     [Fact]
     public void SignPIX_Output_VerifiesViaVerifyPIX()
     {
-        using var sut = new LocalDinamoSdkClient();
-        sut.Connect(_pfxPath, 0, "unused", "");
+        using var sut = BuildSut();
 
         var signed = sut.SignPIX("key", "cert", Encoding.UTF8.GetBytes(Envelope));
         var signedXml = Encoding.UTF8.GetString(signed);
 
         signedXml.Should().Contain("Signature");
-        sut.VerifyPIX("chain", "", signedXml).Should().BeTrue();
+        sut.VerifyPIX("chain", null, signedXml).Should().BeTrue();
     }
 
     [Fact]
-    public void Operations_BeforeConnect_Throw()
+    public void SignPIXDict_Output_VerifiesViaVerifyPIXDict()
     {
-        using var sut = new LocalDinamoSdkClient();
+        using var sut = BuildSut();
+
+        var signed = sut.SignPIXDict("key", "cert", Encoding.UTF8.GetBytes("<CreateEntry><Entry>x</Entry></CreateEntry>"));
+
+        Encoding.UTF8.GetString(signed).Should().Contain("Signature");
+        sut.VerifyPIXDict("chain", null, signed).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Operations_MissingPfx_Throw()
+    {
+        using var sut = BuildSut(Path.Combine(Path.GetTempPath(), "does-not-exist.pfx"));
+
         var act = () => sut.SignPIX("k", "c", Encoding.UTF8.GetBytes(Envelope));
-        act.Should().Throw<InvalidOperationException>();
-    }
 
-    [Fact]
-    public void Connect_MissingPfx_Throws()
-    {
-        using var sut = new LocalDinamoSdkClient();
-        var act = () => sut.Connect(Path.Combine(Path.GetTempPath(), "does-not-exist.pfx"), 0, "u", "p");
         act.Should().Throw<FileNotFoundException>();
     }
 

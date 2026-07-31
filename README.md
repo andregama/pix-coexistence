@@ -99,6 +99,14 @@ A single catch-all route (`{**path}`) forwards any method/path/query, so all DIC
 via the `DictProxy` section (`BaseUrl`, `TimeoutSeconds`, `MtlsKeyId`, `MtlsCertId`,
 `ServerCertChainId`, `UseGzip`, `VerifyHostName`). Run it with `make run-dict-api`.
 
+**HSM session handling.** The Dinamo SDK client (`DinamoNetSdkClient`) keeps a small pool of
+connected HSM sessions and leases one exclusively per operation — Dinamo sessions have thread-session
+affinity and must never be used by two threads at once, while reuse avoids a full HSM login on every
+sign/verify/HTTP call. A session that faults is discarded and reconnected. Note that the managed SDK
+(v4.26.0) exposes no setter for the HSM socket send/receive timeouts, so — per Dinamo's guidance to
+*always* bound them — configure those in the **Dinamo driver configuration** (they cannot be set from
+application code). `DictProxy:TimeoutSeconds` covers the outbound DICT HTTP call itself.
+
 ---
 
 ## Prerequisites

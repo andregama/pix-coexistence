@@ -12,29 +12,24 @@ namespace ConvivenciaPix.Infrastructure.Outbound;
 /// Production/Staging <see cref="IDictForwarder"/> that performs the outbound mTLS request through the
 /// HSM via <see cref="IDinamoSdkClient.SendPix"/> (Dinamo postPIX/getPIX/...). The HSM owns the TLS
 /// handshake and presents the bank's client certificate by label — no certificate is handled in app
-/// code. Retries/timeout come from an injected Polly <see cref="ResiliencePipeline"/> (RF-09).
+/// code. The SDK client owns session lifecycle and thread safety, so this forwarder just maps the
+/// request and calls SendPix. Retries/timeout come from an injected Polly
+/// <see cref="ResiliencePipeline"/> (RF-09).
 /// </summary>
 public sealed class DinamoDictForwarder : IDictForwarder
 {
-    // The HSM session is not safe to share across threads, and the SDK requires the status read to
-    // immediately follow the request on the same session — serialize connect→send→disconnect.
-    private readonly SemaphoreSlim _gate = new(1, 1);
-
     private readonly IDinamoSdkClient _sdk;
-    private readonly DinamoOptions _dinamo;
     private readonly DictProxyOptions _options;
     private readonly ResiliencePipeline _pipeline;
     private readonly ILogger<DinamoDictForwarder> _logger;
 
     public DinamoDictForwarder(
         IDinamoSdkClient sdk,
-        IOptions<DinamoOptions> dinamoOptions,
         IOptions<DictProxyOptions> options,
         [FromKeyedServices(DictResilience.Key)] ResiliencePipeline pipeline,
         ILogger<DinamoDictForwarder> logger)
     {
         _sdk = sdk;
-        _dinamo = dinamoOptions.Value;
         _options = options.Value;
         _pipeline = pipeline;
         _logger = logger;
@@ -49,18 +44,9 @@ public sealed class DinamoDictForwarder : IDictForwarder
 
         _logger.LogDinamoDictForward(request.Method, request.PathAndQuery);
 
-        var response = await _pipeline.ExecuteAsync(async ct =>
-        {
-            await _gate.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                return SendThroughHsm(pixMethod, url, headers, request.Body);
-            }
-            finally
-            {
-                _gate.Release();
-            }
-        }, cancellationToken).ConfigureAwait(false);
+        var response = await _pipeline.ExecuteAsync(
+            _ => new ValueTask<DictProxyResponse>(SendThroughHsm(pixMethod, url, headers, request.Body)),
+            cancellationToken).ConfigureAwait(false);
 
         _logger.LogDinamoDictForwarded(request.Method, request.PathAndQuery, response.StatusCode);
         return response;
@@ -69,29 +55,21 @@ public sealed class DinamoDictForwarder : IDictForwarder
     private DictProxyResponse SendThroughHsm(
         PixHttpMethod method, string url, IReadOnlyList<string> headers, byte[] body)
     {
-        _sdk.Connect(_dinamo.Host, _dinamo.Port, _dinamo.UserId, _dinamo.Password);
-        try
-        {
-            var pix = _sdk.SendPix(
-                method,
-                _options.MtlsKeyId,
-                _options.MtlsCertId,
-                _options.ServerCertChainId,
-                url,
-                headers,
-                body,
-                _options.TimeoutSeconds,
-                _options.UseGzip,
-                _options.VerifyHostName);
+        var pix = _sdk.SendPix(
+            method,
+            _options.MtlsKeyId,
+            _options.MtlsCertId,
+            _options.ServerCertChainId,
+            url,
+            headers,
+            body,
+            _options.TimeoutSeconds,
+            _options.UseGzip,
+            _options.VerifyHostName);
 
-            var headerDict = pix.Headers.ToDictionary(
-                kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-            return new DictProxyResponse(pix.StatusCode, headerDict, pix.ContentType, pix.Body);
-        }
-        finally
-        {
-            _sdk.Disconnect();
-        }
+        var headerDict = pix.Headers.ToDictionary(
+            kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        return new DictProxyResponse(pix.StatusCode, headerDict, pix.ContentType, pix.Body);
     }
 
     private static string BuildUrl(string baseUrl, string pathAndQuery)

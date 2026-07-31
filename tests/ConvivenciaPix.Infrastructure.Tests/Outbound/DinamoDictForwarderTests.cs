@@ -15,11 +15,6 @@ public sealed class DinamoDictForwarderTests
 {
     private readonly Mock<IDinamoSdkClient> _sdk = new();
 
-    private readonly DinamoOptions _dinamo = new()
-    {
-        Host = "hsm.local", Port = 4433, UserId = "u", Password = "p"
-    };
-
     private readonly DictProxyOptions _options = new()
     {
         BaseUrl = "https://dict.example/",
@@ -33,7 +28,6 @@ public sealed class DinamoDictForwarderTests
 
     private DinamoDictForwarder BuildSut() => new(
         _sdk.Object,
-        Options.Create(_dinamo),
         Options.Create(_options),
         ResiliencePipeline.Empty,
         NullLogger<DinamoDictForwarder>.Instance);
@@ -70,22 +64,18 @@ public sealed class DinamoDictForwarderTests
     }
 
     [Fact]
-    public async Task SendAsync_BracketsConnectAndDisconnect_AroundSend()
+    public async Task SendAsync_Get_DispatchesGetSendPix()
     {
-        var sequence = new List<string>();
-        _sdk.Setup(s => s.Connect("hsm.local", 4433, "u", "p")).Callback(() => sequence.Add("connect"));
-        _sdk.Setup(s => s.SendPix(
-                It.IsAny<PixHttpMethod>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<byte[]>(),
-                It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>()))
-            .Callback(() => sequence.Add("send"))
-            .Returns(new PixHttpResponse(200, NoHeaders, null, []));
-        _sdk.Setup(s => s.Disconnect()).Callback(() => sequence.Add("disconnect"));
+        SetupSendPix(new PixHttpResponse(200, NoHeaders, null, []));
 
         await BuildSut().SendAsync(new DictProxyRequest(
             "GET", "/api/v2/entries/x", NoHeaders, null, []));
 
-        sequence.Should().Equal("connect", "send", "disconnect");
+        _sdk.Verify(s => s.SendPix(
+            PixHttpMethod.Get, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            "https://dict.example/api/v2/entries/x",
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<byte[]>(),
+            It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]

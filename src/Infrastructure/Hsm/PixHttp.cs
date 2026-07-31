@@ -1,6 +1,23 @@
+using System.IO.Compression;
 using System.Text;
 
 namespace ConvivenciaPix.Infrastructure.Hsm;
+
+/// <summary>
+/// Gzip compression for PIX request bodies. When <c>UseGzip</c> is enabled, the Dinamo SDK adds the
+/// Content-Encoding/Accept-Encoding headers and auto-decompresses responses, but the request payload
+/// must be compressed by the caller — this helper does that.
+/// </summary>
+internal static class PixGzip
+{
+    public static byte[] Compress(byte[] data)
+    {
+        using var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.Optimal, leaveOpen: true))
+            gzip.Write(data, 0, data.Length);
+        return output.ToArray();
+    }
+}
 
 /// <summary>HTTP verb for a Dinamo PIX mTLS request (postPIX/putPIX/getPIX/deletePIX).</summary>
 public enum PixHttpMethod
