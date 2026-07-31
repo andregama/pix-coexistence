@@ -64,6 +64,80 @@ public sealed class LocalDinamoSdkClient : IDinamoSdkClient, IDisposable
         return EnvelopedXmlSigner.Verify(Encoding.UTF8.GetString(signedMessage), _certificate!);
     }
 
+    public PixHttpResponse SendPix(
+        PixHttpMethod method,
+        string keyId,
+        string certId,
+        string serverCertChainId,
+        string url,
+        IReadOnlyList<string> requestHeaders,
+        byte[] body,
+        int timeoutSeconds,
+        bool useGzip,
+        bool verifyHostName)
+    {
+        EnsureConnected();
+
+        // Software mTLS: present the loaded PFX as the client certificate for https targets, mirroring
+        // what the HSM does with its stored key/cert in Production. Labels are ignored locally.
+        using var handler = new HttpClientHandler();
+        if (url.StartsWith("https", StringComparison.OrdinalIgnoreCase))
+            handler.ClientCertificates.Add(_certificate!);
+
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
+
+        var httpMethod = method switch
+        {
+            PixHttpMethod.Get => HttpMethod.Get,
+            PixHttpMethod.Post => HttpMethod.Post,
+            PixHttpMethod.Put => HttpMethod.Put,
+            PixHttpMethod.Delete => HttpMethod.Delete,
+            _ => throw new ArgumentOutOfRangeException(nameof(method), method, "Unsupported PIX HTTP method.")
+        };
+
+        using var request = new HttpRequestMessage(httpMethod, url);
+        HttpContent? content = null;
+        if (method is PixHttpMethod.Post or PixHttpMethod.Put)
+            content = new ByteArrayContent(body);
+
+        foreach (var header in requestHeaders)
+        {
+            var idx = header.IndexOf(':');
+            if (idx <= 0) continue;
+            var name = header[..idx].Trim();
+            var value = header[(idx + 1)..].Trim();
+            if (name.StartsWith("Content-", StringComparison.OrdinalIgnoreCase))
+                content?.Headers.TryAddWithoutValidation(name, value);
+            else
+                request.Headers.TryAddWithoutValidation(name, value);
+        }
+
+        request.Content = content;
+
+        using var response = http.Send(request);
+        var responseBody = ReadBody(response.Content);
+
+        var headers = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in response.Headers)
+            headers[h.Key] = h.Value.ToArray();
+        foreach (var h in response.Content.Headers)
+            headers[h.Key] = h.Value.ToArray();
+
+        return new PixHttpResponse(
+            (int)response.StatusCode,
+            headers,
+            response.Content.Headers.ContentType?.ToString(),
+            responseBody);
+    }
+
+    private static byte[] ReadBody(HttpContent content)
+    {
+        using var stream = content.ReadAsStream();
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ms.ToArray();
+    }
+
     public void Disconnect()
     {
         _connected = false;

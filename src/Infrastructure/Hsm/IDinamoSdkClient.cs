@@ -43,6 +43,26 @@ public interface IDinamoSdkClient
     /// </summary>
     bool VerifyPIXDict(string chainId, string crl, byte[] signedMessage);
 
+    /// <summary>
+    /// Performs an mTLS HTTP request to the DICT API through the HSM. The HSM owns the TLS handshake
+    /// and presents the client certificate <paramref name="certId"/> / key <paramref name="keyId"/>
+    /// (referenced by label, never leaving the HSM), validating the server against
+    /// <paramref name="serverCertChainId"/>. Equivalent to DinamoClient.postPIX/putPIX/getPIX/deletePIX
+    /// followed by getPIXHTTPReqCode()/getPIXHTTPReqDetails() on the same session.
+    /// <paramref name="requestHeaders"/> entries are formatted "Name: Value" (no CRLF).
+    /// </summary>
+    PixHttpResponse SendPix(
+        PixHttpMethod method,
+        string keyId,
+        string certId,
+        string serverCertChainId,
+        string url,
+        IReadOnlyList<string> requestHeaders,
+        byte[] body,
+        int timeoutSeconds,
+        bool useGzip,
+        bool verifyHostName);
+
     /// <summary>Closes the HSM session and releases the connection.</summary>
     void Disconnect();
 }
