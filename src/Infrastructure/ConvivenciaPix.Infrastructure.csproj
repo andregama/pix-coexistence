@@ -20,6 +20,7 @@
     <PackageReference Include="System.Security.Cryptography.Xml" />
     <PackageReference Include="Dinamo.Hsm" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Polly.Core" />
   </ItemGroup>
 
   <!-- Embed the canonical schema scripts from infra/sql so SqlSchemaBootstrapper can

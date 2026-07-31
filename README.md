@@ -83,15 +83,29 @@ homologation certificates. It is a transparent, stateless reverse proxy:
 1. System B sends a (signed) DICT message to the proxy over mTLS.
 2. The proxy strips the existing signature and **re-signs the request** with the bank's HSM DICT
    identity (Dinamo `SignPIXDict`, via `IHsmService.SignDictXmlAsync`).
-3. It forwards the request to the real DICT API over mTLS, presenting the bank's ICP-Brasil client
-   certificate — **HSM-backed** in Production (Dinamo CNG KSP, key never leaves the HSM), a local
-   PFX in Dev/Staging.
+3. It forwards the request to the real DICT API **through the HSM's own mTLS HTTP client** (Dinamo
+   `postPIX`/`getPIX`/`putPIX`/`deletePIX`): the HSM performs the TLS handshake and presents the
+   bank's client certificate by label (`DictProxy:MtlsKeyId`/`MtlsCertId`), validating the server
+   against `ServerCertChainId`. No certificate is ever handled in application code.
 4. It strips Bacen's signature from the response, **re-signs it**, and returns it to System B.
+
+**Transport is environment-switched** (mirroring the `IHsmService` switch): Production/Staging use the
+Dinamo PIX HTTP client (`DinamoDictForwarder`); Development uses a plain `HttpClient`
+(`HttpDictForwarder`) against a local stub, so no HSM is needed to run or test locally. Outbound
+retries/timeout (RF-09) come from a Polly `ResiliencePipeline`.
 
 A single catch-all route (`{**path}`) forwards any method/path/query, so all DICT operations
 (CreateEntry, GetEntry, Claims, Infractions, …) are handled with no per-operation code. Configure it
-via the `DictProxy` section (`BaseUrl`, `TimeoutSeconds`, and the client-certificate settings). Run
-it with `make run-dict-api`.
+via the `DictProxy` section (`BaseUrl`, `TimeoutSeconds`, `MtlsKeyId`, `MtlsCertId`,
+`ServerCertChainId`, `UseGzip`, `VerifyHostName`). Run it with `make run-dict-api`.
+
+**HSM session handling.** The Dinamo SDK client (`DinamoNetSdkClient`) keeps a small pool of
+connected HSM sessions and leases one exclusively per operation — Dinamo sessions have thread-session
+affinity and must never be used by two threads at once, while reuse avoids a full HSM login on every
+sign/verify/HTTP call. A session that faults is discarded and reconnected. Note that the managed SDK
+(v4.26.0) exposes no setter for the HSM socket send/receive timeouts, so — per Dinamo's guidance to
+*always* bound them — configure those in the **Dinamo driver configuration** (they cannot be set from
+application code). `DictProxy:TimeoutSeconds` covers the outbound DICT HTTP call itself.
 
 ---
 

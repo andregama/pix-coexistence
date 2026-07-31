@@ -7,9 +7,10 @@ using System.Text;
 namespace ConvivenciaPix.Infrastructure.Signing;
 
 /// <summary>
-/// Production IHsmService backed by the Dinamo HSM via IDinamoSdkClient. The HSM signs and
-/// verifies the whole PIX/SPI envelope (SignPIX/VerifyPIX); this service just brackets those calls
-/// with a connect/disconnect, since HSM sessions are not shared across threads.
+/// Production IHsmService backed by the Dinamo HSM via IDinamoSdkClient. The HSM signs and verifies
+/// the whole PIX/SPI (SignPIX) or DICT (SignPIXDict) message internally. Session lifecycle and thread
+/// safety are owned by the SDK client, so this service just brackets the strip/encode around a single
+/// self-contained call.
 /// </summary>
 public sealed class DinamoHsmService : IHsmService
 {
@@ -32,76 +33,33 @@ public sealed class DinamoHsmService : IHsmService
         // Bacen responses arrive already signed; the HSM's SignPIX envelops internally, so strip any
         // existing <Signature> here to avoid delivering a double-signed envelope.
         var toSign = EnvelopedXmlSigner.StripSignatures(unsignedXml);
-
-        _logger.LogHsmConnect(_options.Host, _options.Port);
-        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
-        try
-        {
-            var signed = _sdk.SignPIX(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
-            _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
-            return Task.FromResult(Encoding.UTF8.GetString(signed));
-        }
-        finally
-        {
-            _sdk.Disconnect();
-        }
+        var signed = _sdk.SignPIX(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
+        _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
+        return Task.FromResult(Encoding.UTF8.GetString(signed));
     }
 
-    public Task<bool> VerifyXmlAsync(string signedXml, CancellationToken cancellationToken = default)
-    {
-        _logger.LogHsmConnect(_options.Host, _options.Port);
-        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
-        try
-        {
-            return Task.FromResult(_sdk.VerifyPIX(_options.ChainId, _options.Crl, signedXml));
-        }
-        finally
-        {
-            _sdk.Disconnect();
-        }
-    }
+    public Task<bool> VerifyXmlAsync(string signedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_sdk.VerifyPIX(_options.ChainId, NullIfEmpty(_options.Crl), signedXml));
 
     public Task<string> SignDictXmlAsync(string unsignedXml, CancellationToken cancellationToken = default)
     {
         // DICT messages arrive already signed (by System B, or by Bacen on the response); the HSM's
         // SignPIXDict envelops internally, so strip any existing <Signature> to avoid a double sign.
         var toSign = EnvelopedXmlSigner.StripSignatures(unsignedXml);
-
-        _logger.LogHsmConnect(_options.Host, _options.Port);
-        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
-        try
-        {
-            var signed = _sdk.SignPIXDict(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
-            _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
-            return Task.FromResult(Encoding.UTF8.GetString(signed));
-        }
-        finally
-        {
-            _sdk.Disconnect();
-        }
+        var signed = _sdk.SignPIXDict(_options.KeyId, _options.CertId, Encoding.UTF8.GetBytes(toSign));
+        _logger.LogHsmSigned(_options.KeyId, toSign.Length, signed.Length);
+        return Task.FromResult(Encoding.UTF8.GetString(signed));
     }
 
-    public Task<bool> VerifyDictXmlAsync(string signedXml, CancellationToken cancellationToken = default)
-    {
-        _logger.LogHsmConnect(_options.Host, _options.Port);
-        _sdk.Connect(_options.Host, _options.Port, _options.UserId, _options.Password);
-        try
-        {
-            return Task.FromResult(
-                _sdk.VerifyPIXDict(_options.ChainId, _options.Crl, Encoding.UTF8.GetBytes(signedXml)));
-        }
-        finally
-        {
-            _sdk.Disconnect();
-        }
-    }
+    public Task<bool> VerifyDictXmlAsync(string signedXml, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_sdk.VerifyPIXDict(_options.ChainId, NullIfEmpty(_options.Crl), Encoding.UTF8.GetBytes(signedXml)));
+
+    // The SDK expects a null CRL reference (not an empty string) when no revocation list is used.
+    private static string? NullIfEmpty(string value) => string.IsNullOrEmpty(value) ? null : value;
 }
 
 internal static partial class DinamoHsmServiceLogMessages
 {
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Connecting to Dinamo HSM at {Host}:{Port}")]
-    public static partial void LogHsmConnect(this ILogger logger, string host, int port);
-
     [LoggerMessage(Level = LogLevel.Debug,
         Message = "PIX envelope signed by HSM. KeyId={KeyId} InputBytes={InputBytes} SignedBytes={SignedBytes}")]
     public static partial void LogHsmSigned(this ILogger logger, string keyId, int inputBytes, int signedBytes);
