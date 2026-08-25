@@ -16,17 +16,20 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
     private readonly ISpiSentMsgRepository _sentMsgRepo;
     private readonly ISpiXmlParser _xmlParser;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly ILogger<CorrelateSystemBOutboundUseCase> _logger;
 
     public CorrelateSystemBOutboundUseCase(
         ISpiSentMsgRepository sentMsgRepo,
         ISpiXmlParser xmlParser,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         ILogger<CorrelateSystemBOutboundUseCase> logger)
     {
         _sentMsgRepo = sentMsgRepo;
         _xmlParser = xmlParser;
         _publisher = publisher;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -41,8 +44,11 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
             return;
         }
 
-        var idempotentId = _xmlParser.ExtractIdempotentId(rawXml, msgType);
+        // Correlation key: shared message-level idempotency key for most types, or a derived key
+        // (recurrenceId / OrgnlEndToEndId) for the types the orchestrator cannot align.
+        var idempotentId = _xmlParser.ExtractCorrelationKey(rawXml, msgType);
         var originalId = _xmlParser.ExtractOriginalIdempotentId(rawXml, msgType);
+        var correlationSource = _xmlParser.GetCorrelationSource(msgType);
         string? msgId = null;
         try { msgId = _xmlParser.ExtractMessageId(rawXml); }
         catch { /* non-critical */ }
@@ -56,11 +62,15 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
             msg = SpiSentMsg.Create(idempotentId, msgType);
 
         msg.UpdateFromSystemB(msgId, rawXml, null);
+        msg.SetCorrelationSource(correlationSource);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 
         if (isNew)
+        {
+            _metrics.RecordCorrelationSource(correlationSource);
             await _sentMsgRepo.AddAsync(msg, ct);
+        }
         else
             await _sentMsgRepo.UpdateAsync(msg, ct);
 

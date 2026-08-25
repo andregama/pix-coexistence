@@ -20,6 +20,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     private readonly Mock<ISpiXmlParser> _xmlParserMock = new();
     private readonly Mock<IInboundResponseTransformer> _transformerMock = new();
     private readonly Mock<IKafkaPublisher> _publisherMock = new();
+    private readonly Mock<ISpiMetrics> _metricsMock = new();
 
     private readonly CorrelateSystemAInboundUseCase _sut;
 
@@ -34,7 +35,8 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     public CorrelateSystemAInboundUseCaseTests()
     {
         _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.002");
-        _xmlParserMock.Setup(p => p.ExtractIdempotentId(It.IsAny<string>(), "pacs.002")).Returns("E2E-A");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "pacs.002")).Returns("E2E-A");
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("pacs.002")).Returns("MessageKey");
         _xmlParserMock.Setup(p => p.ExtractOriginalIdempotentId(It.IsAny<string>(), "pacs.002"))
             .Returns((string?)null);
         _xmlParserMock.Setup(p => p.ExtractMessageId(It.IsAny<string>())).Returns("MSG-1");
@@ -53,6 +55,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             _xmlParserMock.Object,
             _transformerMock.Object,
             _publisherMock.Object,
+            _metricsMock.Object,
             retryOptions,
             TimeProvider.System,
             NullLogger<CorrelateSystemAInboundUseCase>.Instance);

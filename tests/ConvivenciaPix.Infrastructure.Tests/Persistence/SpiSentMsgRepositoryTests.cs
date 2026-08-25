@@ -55,6 +55,18 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
     }
 
     [Fact]
+    public async Task AddAsync_PersistsCorrelationSource()
+    {
+        var idempotentId = Uid();
+        var msg = SpiSentMsg.Create(idempotentId, "pain.012");
+        msg.SetCorrelationSource("DerivedKey");
+        await CreateRepo().AddAsync(msg);
+
+        var found = await CreateRepo().FindByIdempotentIdAsync(idempotentId);
+        found!.CorrelationSource.Should().Be("DerivedKey");
+    }
+
+    [Fact]
     public async Task DeleteOlderThan_RemovesStaleRows_LeavesRecentRows()
     {
         var staleId = Uid();

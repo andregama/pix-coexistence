@@ -18,6 +18,28 @@ public sealed class SpiXmlParser : ISpiXmlParser
         ("head",    "urn:iso:std:iso:20022:tech:xsd:head.001.001.02"),
     ];
 
+    // All SPI message types this parser recognises, matched against AppHdr/MsgDefIdr by "<family>.<nn>"
+    // prefix. Order does not matter — the prefixes are mutually exclusive.
+    private static readonly string[] KnownMessageTypes =
+    [
+        "pacs.008", "pacs.002", "pacs.004", "pibr.001", "pibr.002",
+        "pain.009", "pain.011", "pain.012", "pain.013", "pain.014",
+        "camt.055", "camt.029", "camt.025", "camt.014",
+        "reda.041", "admi.002", "admi.004",
+    ];
+
+    // Types whose correlation key is derived from the recurrenceId (IdRec), because the orchestrator
+    // cannot align the message-level idempotency keys System A and System B mint independently.
+    // (pain.009/pain.013 are excluded: System A only receives them, so they carry Bacen-assigned keys
+    // already shared across both systems.)
+    private static readonly HashSet<string> RecurrenceDerivedKeyTypes =
+        new(StringComparer.OrdinalIgnoreCase) { "pain.011", "pain.012", "pain.014" };
+
+    // Types whose correlation key is the original payment's OrgnlEndToEndId — shared because it
+    // references the already-correlated pacs.008.
+    private static readonly HashSet<string> OriginalPaymentKeyTypes =
+        new(StringComparer.OrdinalIgnoreCase) { "camt.055", "camt.029" };
+
     public string ExtractMessageId(string xml)
     {
         var (doc, ns) = Load(xml);
@@ -84,11 +106,11 @@ public sealed class SpiXmlParser : ISpiXmlParser
 
         if (msgDefIdr is not null)
         {
-            if (msgDefIdr.StartsWith("pacs.008", StringComparison.OrdinalIgnoreCase)) return "pacs.008";
-            if (msgDefIdr.StartsWith("pacs.002", StringComparison.OrdinalIgnoreCase)) return "pacs.002";
-            if (msgDefIdr.StartsWith("pacs.004", StringComparison.OrdinalIgnoreCase)) return "pacs.004";
-            if (msgDefIdr.StartsWith("pibr.001", StringComparison.OrdinalIgnoreCase)) return "pibr.001";
-            if (msgDefIdr.StartsWith("pibr.002", StringComparison.OrdinalIgnoreCase)) return "pibr.002";
+            // The MsgDefIdr always starts with the "<family>.<number>" (e.g. "pain.012.001.08"),
+            // so a prefix match on the first eight chars uniquely identifies the type.
+            foreach (var type in KnownMessageTypes)
+                if (msgDefIdr.StartsWith(type, StringComparison.OrdinalIgnoreCase))
+                    return type;
         }
 
         // Fallback: infer from the business message element name.
@@ -105,11 +127,26 @@ public sealed class SpiXmlParser : ISpiXmlParser
 
         return businessElement switch
         {
-            "FIToFICstmrCdtTrf" => "pacs.008",
-            "FIToFIPmtStsRpt"   => "pacs.002",
-            "PmtRtr"            => "pacs.004",
-            "EchoReq"           => "pibr.001",
-            "EchoRpt"           => "pibr.002",
+            "FIToFICstmrCdtTrf"       => "pacs.008",
+            "FIToFIPmtStsRpt"         => "pacs.002",
+            "PmtRtr"                  => "pacs.004",
+            "EchoReq"                 => "pibr.001",
+            "EchoRpt"                 => "pibr.002",
+            // Pix Automático (recurring authorization) and its status reports.
+            "MndtInitnReq"            => "pain.009",
+            "MndtCxlReq"              => "pain.011",
+            "MndtAccptncRpt"          => "pain.012",
+            "CdtrPmtActvtnReq"        => "pain.013",
+            "CdtrPmtActvtnReqStsRpt"  => "pain.014",
+            // Cancellation / investigation.
+            "CstmrPmtCxlReq"          => "camt.055",
+            "RsltnOfInvstgtn"         => "camt.029",
+            "Rct"                     => "camt.025",
+            "GetGnlBizInf"            => "camt.014",
+            // Reference data (Pix Automático party/authorization) and administrative.
+            "PtyAndAcctInf"           => "reda.041",
+            "MErr" or "MssgRjctn"     => "admi.002",
+            "SysEvtNtfctn"            => "admi.004",
             _ => throw new InvalidOperationException(
                 $"Cannot determine message type from business element '{businessElement}' and no MsgDefIdr found.")
         };
@@ -138,19 +175,85 @@ public sealed class SpiXmlParser : ISpiXmlParser
                     "//*[local-name()='EchoReq']/*[local-name()='GrpHdr']/*[local-name()='MsgId']")
                 ?? throw new InvalidOperationException("pibr.001 XML missing EchoReq/GrpHdr/MsgId"),
 
+            // Pix Automático / cancellation / administrative families: the message-level idempotency
+            // key is the header MsgId (AppHdr BizMsgIdr, falling back to GrpHdr/MsgId).
+            _ when KnownMessageTypes.Contains(msgType) => ExtractHeaderMsgId(doc, ns)
+                ?? throw new InvalidOperationException($"{msgType} XML missing AppHdr/GrpHdr MsgId"),
+
             _ => throw new ArgumentException($"Unsupported msgType '{msgType}'", nameof(msgType))
         };
     }
 
+    public string ExtractCorrelationKey(string xml, string msgType)
+    {
+        if (RecurrenceDerivedKeyTypes.Contains(msgType))
+        {
+            // recurrenceId (IdRec) is shared across A and B; msgType keeps distinct message types on
+            // the same recurrence from colliding on one row. NOTE: if two messages of the same type
+            // can occur for one recurrenceId within the TTL window, fold in the per-exchange
+            // discriminator the Catálogo de Serviços do SFN defines (confirm the field).
+            var recurrenceId = ExtractRecurrenceId(xml)
+                ?? throw new InvalidOperationException(
+                    $"{msgType} XML missing recurrenceId (IdRec); cannot derive correlation key");
+            return $"{msgType}:{recurrenceId}";
+        }
+
+        if (OriginalPaymentKeyTypes.Contains(msgType))
+        {
+            var (doc, ns) = Load(xml);
+            return SelectText(doc, ns, "//*[local-name()='OrgnlEndToEndId']")
+                ?? throw new InvalidOperationException(
+                    $"{msgType} XML missing OrgnlEndToEndId; cannot derive correlation key");
+        }
+
+        // All other types correlate on the shared message-level idempotency key.
+        return ExtractIdempotentId(xml, msgType);
+    }
+
+    public string GetCorrelationSource(string msgType) =>
+        RecurrenceDerivedKeyTypes.Contains(msgType) || OriginalPaymentKeyTypes.Contains(msgType)
+            ? "DerivedKey"
+            : "MessageKey";
+
     public string? ExtractOriginalIdempotentId(string xml, string msgType)
     {
-        if (msgType != "pacs.004")
-            return null;
+        var (doc, ns) = Load(xml);
+        return msgType switch
+        {
+            // Return of a payment: back-link to the original pacs.008 EndToEndId.
+            "pacs.004" => SelectText(doc, ns, "//*[local-name()='TxInf']/*[local-name()='OrgnlEndToEndId']"),
 
+            // Status reports / rejections carry the answered message's MsgId in OrgnlMsgId; the
+            // Correlate Worker uses this to rewrite A's reference to B's before delivery.
+            "pain.012" or "pain.014" or "camt.025" or "camt.029" or "admi.002" => SelectText(doc, ns,
+                "//*[local-name()='OrgnlMsgId']",
+                "//*[local-name()='OrgnlMsgNmId']",
+                "//*[local-name()='RltdRef']/*[local-name()='Ref']"),
+
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// recurrenceId (IdRec) — the Pix Automático authorization identifier shared by System A and B.
+    /// Tries the known Bacen/ISO carriers; exact path to confirm against the Catálogo de Serviços.
+    /// </summary>
+    private static string? ExtractRecurrenceId(string xml)
+    {
         var (doc, ns) = Load(xml);
         return SelectText(doc, ns,
-            "//*[local-name()='TxInf']/*[local-name()='OrgnlEndToEndId']");
+            "//*[local-name()='IdRec']",
+            "//*[local-name()='RcrrgId']",
+            "//*[local-name()='Rcrr']/*[local-name()='Id']",
+            "//*[local-name()='MndtId']");
     }
+
+    private static string? ExtractHeaderMsgId(XmlDocument doc, XmlNamespaceManager ns) =>
+        SelectText(doc, ns,
+            "//head:AppHdr/head:MsgId",
+            "//*[local-name()='AppHdr']/*[local-name()='MsgId']",
+            "//*[local-name()='AppHdr']/*[local-name()='BizMsgIdr']",
+            "//*[local-name()='GrpHdr']/*[local-name()='MsgId']");
 
     private static (XmlDocument doc, XmlNamespaceManager ns) Load(string xml)
     {

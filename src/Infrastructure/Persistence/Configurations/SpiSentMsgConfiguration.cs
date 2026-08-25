@@ -26,6 +26,7 @@ public sealed class SpiSentMsgConfiguration : IEntityTypeConfiguration<SpiSentMs
         builder.Property(x => x.OriginalMsgIdempotentId).HasColumnType("VARCHAR(255)");
         builder.Property(x => x.SystemAErrorCode).HasColumnType("VARCHAR(MAX)");
         builder.Property(x => x.SystemBErrorCode).HasColumnType("VARCHAR(MAX)");
+        builder.Property(x => x.CorrelationSource).HasColumnType("VARCHAR(20)");
         builder.Property(x => x.CreatedAt).HasColumnType("DATETIME2").IsRequired();
         builder.Property(x => x.UpdatedAt).HasColumnType("DATETIME2");
 

@@ -194,4 +194,123 @@ public sealed class SpiXmlParserTests
         var act = () => _parser.ExtractIdempotentId(xml, "pacs.008");
         act.Should().Throw<InvalidOperationException>().WithMessage("*EndToEndId*");
     }
+
+    // ---- New message types: Pix Automático / cancellation / administrative families ----
+
+    private static string BuildPain012(string msgId = "MSG-PAIN012", string recurrenceId = "REC-1", string orgnlMsgId = "MSG-PAIN009")
+        => $"""
+            <Document xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
+              <head:AppHdr>
+                <head:MsgId>{msgId}</head:MsgId>
+                <head:MsgDefIdr>pain.012.001.08</head:MsgDefIdr>
+              </head:AppHdr>
+              <MndtAccptncRpt>
+                <UndrlygAccptncDtls>
+                  <OrgnlMsgInf><OrgnlMsgId>{orgnlMsgId}</OrgnlMsgId></OrgnlMsgInf>
+                  <IdRec>{recurrenceId}</IdRec>
+                </UndrlygAccptncDtls>
+              </MndtAccptncRpt>
+            </Document>
+            """;
+
+    private static string BuildCamt055(string msgId = "MSG-CAMT055", string orgnlEndToEndId = "E2E-ORIG", string caseId = "CASE-A")
+        => $"""
+            <Document xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
+              <head:AppHdr>
+                <head:MsgId>{msgId}</head:MsgId>
+                <head:MsgDefIdr>camt.055.001.08</head:MsgDefIdr>
+              </head:AppHdr>
+              <CstmrPmtCxlReq>
+                <Case><Id>{caseId}</Id></Case>
+                <Undrlyg><TxInf><OrgnlEndToEndId>{orgnlEndToEndId}</OrgnlEndToEndId></TxInf></Undrlyg>
+              </CstmrPmtCxlReq>
+            </Document>
+            """;
+
+    [Theory]
+    [InlineData("pain.009", "MndtInitnReq")]
+    [InlineData("pain.011", "MndtCxlReq")]
+    [InlineData("pain.012", "MndtAccptncRpt")]
+    [InlineData("pain.013", "CdtrPmtActvtnReq")]
+    [InlineData("pain.014", "CdtrPmtActvtnReqStsRpt")]
+    [InlineData("camt.055", "CstmrPmtCxlReq")]
+    [InlineData("camt.029", "RsltnOfInvstgtn")]
+    [InlineData("camt.025", "Rct")]
+    [InlineData("admi.004", "SysEvtNtfctn")]
+    public void ExtractMessageType_FromBusinessElement_ForNewTypes(string expected, string businessElement)
+    {
+        var xml = $"<Document><{businessElement}/></Document>";
+        _parser.ExtractMessageType(xml).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ExtractMessageType_FromMsgDefIdr_ForNewType()
+    {
+        _parser.ExtractMessageType(BuildPain012()).Should().Be("pain.012");
+    }
+
+    [Fact]
+    public void ExtractIdempotentId_NewType_ReturnsHeaderMsgId()
+    {
+        _parser.ExtractIdempotentId(BuildPain012(msgId: "MSG-XYZ"), "pain.012").Should().Be("MSG-XYZ");
+    }
+
+    [Fact]
+    public void ExtractCorrelationKey_RecurrenceDerivedType_CombinesMsgTypeAndRecurrenceId()
+    {
+        // recurrenceId is shared across A and B, so both sides compute the same key even though
+        // their message-level MsgIds differ.
+        var xmlA = BuildPain012(msgId: "MSG-A", recurrenceId: "REC-42");
+        var xmlB = BuildPain012(msgId: "MSG-B", recurrenceId: "REC-42");
+
+        var keyA = _parser.ExtractCorrelationKey(xmlA, "pain.012");
+        var keyB = _parser.ExtractCorrelationKey(xmlB, "pain.012");
+
+        keyA.Should().Be("pain.012:REC-42");
+        keyB.Should().Be(keyA);
+    }
+
+    [Fact]
+    public void ExtractCorrelationKey_OriginalPaymentType_UsesOrgnlEndToEndId()
+    {
+        var xmlA = BuildCamt055(msgId: "MSG-A", orgnlEndToEndId: "E2E-SHARED");
+        var xmlB = BuildCamt055(msgId: "MSG-B", orgnlEndToEndId: "E2E-SHARED");
+
+        _parser.ExtractCorrelationKey(xmlA, "camt.055").Should().Be("E2E-SHARED");
+        _parser.ExtractCorrelationKey(xmlB, "camt.055").Should().Be("E2E-SHARED");
+    }
+
+    [Fact]
+    public void ExtractCorrelationKey_PacsType_DelegatesToIdempotencyKey()
+    {
+        var xml = BuildPacs008(endToEndId: "E2E-1");
+        _parser.ExtractCorrelationKey(xml, "pacs.008").Should().Be("E2E-1");
+    }
+
+    [Theory]
+    [InlineData("pacs.008", "MessageKey")]
+    [InlineData("pain.009", "MessageKey")]
+    [InlineData("pain.012", "DerivedKey")]
+    [InlineData("pain.014", "DerivedKey")]
+    [InlineData("camt.055", "DerivedKey")]
+    [InlineData("camt.029", "DerivedKey")]
+    public void GetCorrelationSource_ReportsStrategy(string msgType, string expected)
+    {
+        _parser.GetCorrelationSource(msgType).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ExtractOriginalIdempotentId_StatusReport_ReturnsOrgnlMsgId()
+    {
+        _parser.ExtractOriginalIdempotentId(BuildPain012(orgnlMsgId: "MSG-ORIG"), "pain.012")
+            .Should().Be("MSG-ORIG");
+    }
+
+    [Fact]
+    public void ExtractCorrelationKey_RecurrenceDerivedType_MissingRecurrenceId_Throws()
+    {
+        var xml = "<Document><MndtAccptncRpt><UndrlygAccptncDtls/></MndtAccptncRpt></Document>";
+        var act = () => _parser.ExtractCorrelationKey(xml, "pain.012");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*recurrenceId*");
+    }
 }

@@ -82,6 +82,21 @@ public sealed class InboundResponseTransformerTests
     }
 
     [Fact]
+    public void Transform_RewritesOrgnlMsgId_FromAToB_ForStatusReport()
+    {
+        // System A and System B minted independent MsgIds for the message being answered; the
+        // response's OrgnlMsgId back-link must be rewritten from A's MsgId to B's.
+        var sentA = "<Document><AppHdr><MsgId>MSG-A</MsgId></AppHdr><MndtCxlReq/></Document>";
+        var sentB = "<Document><AppHdr><MsgId>MSG-B</MsgId></AppHdr><MndtCxlReq/></Document>";
+        var response = "<Document><MndtAccptncRpt><OrgnlMsgInf><OrgnlMsgId>MSG-A</OrgnlMsgId></OrgnlMsgInf></MndtAccptncRpt></Document>";
+
+        var result = _transformer.Transform(response, sentA, sentB);
+
+        result.Should().Contain("<OrgnlMsgId>MSG-B</OrgnlMsgId>");
+        result.Should().NotContain("MSG-A");
+    }
+
+    [Fact]
     public void Transform_ReturnsUnchanged_WhenAAndBAreEqual()
     {
         var sent = Pacs008("E2E-SAME", "DICT");
