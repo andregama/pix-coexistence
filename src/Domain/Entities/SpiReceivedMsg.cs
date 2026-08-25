@@ -10,6 +10,8 @@ public sealed class SpiReceivedMsg
     public string? OriginalMsgIdempotentId { get; private set; }
     public string? SystemAErrorCode { get; private set; }
     public string? SystemBErrorCode { get; private set; }
+    /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
+    public string? CorrelationSource { get; private set; }
     public DateTime CreatedAt { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
 
@@ -76,5 +78,12 @@ public sealed class SpiReceivedMsg
         XmlMsgSystemB = signedXml;
         SystemBErrorCode = errorCode;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>First-wins: records the correlation-key strategy used to key this row.</summary>
+    public void SetCorrelationSource(string? source)
+    {
+        if (CorrelationSource is null && !string.IsNullOrWhiteSpace(source))
+            CorrelationSource = source;
     }
 }

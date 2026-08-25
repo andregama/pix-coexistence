@@ -18,7 +18,7 @@ public sealed class SpiMetrics : ISpiMetrics, IDisposable
         _meter = new Meter(MeterName, "1.0.0");
         _correlationSourceCounter = _meter.CreateCounter<long>(
             "spi.correlation.source",
-            description: "Number of correlations by source (Orchestrator or Heuristic)");
+            description: "Number of correlations by key-strategy (MessageKey or DerivedKey)");
         _responseLatencyHistogram = _meter.CreateHistogram<double>(
             "spi.proxy.response_latency_ms",
             unit: "ms",

@@ -17,17 +17,20 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
     private readonly ISpiSentMsgRepository _sentMsgRepo;
     private readonly ISpiXmlParser _xmlParser;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly ILogger<CorrelateSystemAOutboundUseCase> _logger;
 
     public CorrelateSystemAOutboundUseCase(
         ISpiSentMsgRepository sentMsgRepo,
         ISpiXmlParser xmlParser,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         ILogger<CorrelateSystemAOutboundUseCase> logger)
     {
         _sentMsgRepo = sentMsgRepo;
         _xmlParser = xmlParser;
         _publisher = publisher;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -42,8 +45,12 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
             return;
         }
 
-        var idempotentId = _xmlParser.ExtractIdempotentId(mapped.XmlMsg, msgType);
+        // Correlation key: the shared message-level idempotency key for most types, or a key derived
+        // from a shared business field (recurrenceId / OrgnlEndToEndId) for the types the orchestrator
+        // cannot align. Stored as the row's IdempotentId (the PK).
+        var idempotentId = _xmlParser.ExtractCorrelationKey(mapped.XmlMsg, msgType);
         var originalId = _xmlParser.ExtractOriginalIdempotentId(mapped.XmlMsg, msgType);
+        var correlationSource = _xmlParser.GetCorrelationSource(msgType);
 
         // First-arrival create-if-missing: whichever of System A/B outbound arrives first creates
         // the shared row (keyed by IdempotentId); the second side updates it. Mirrors the
@@ -54,11 +61,15 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
             msg = SpiSentMsg.Create(idempotentId, msgType);
 
         msg.UpdateFromSystemA(mapped.MessageId, mapped.XmlMsg, mapped.Problem);
+        msg.SetCorrelationSource(correlationSource);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 
         if (isNew)
+        {
+            _metrics.RecordCorrelationSource(correlationSource);
             await _sentMsgRepo.AddAsync(msg, ct);
+        }
         else
             await _sentMsgRepo.UpdateAsync(msg, ct);
 

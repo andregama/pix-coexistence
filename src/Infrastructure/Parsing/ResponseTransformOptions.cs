@@ -28,6 +28,25 @@ public sealed class ResponseTransformOptions
             SentValueXPath = "//*[local-name()='LclInstrm']/*[local-name()='Prtry']",
             ResponseTargetXPath = "//*[local-name()='OrgnlTxRef']//*[local-name()='LclInstrm']/*[local-name()='Prtry']"
         },
+        // Original message id back-link. Status reports / receipts / rejections that answer a message
+        // System B originated (pain.012→pain.011, pain.014→pain.013, camt.029→camt.055, camt.025,
+        // admi.002) carry the answered message's MsgId in OrgnlMsgId. A and B mint MsgIds
+        // independently, so rewrite the reference from A's header MsgId to B's. Self-guarding: fires
+        // only when the response actually carries OrgnlMsgId. (Confirm exact carriers vs. the Catálogo.)
+        new ResponseTransformRule
+        {
+            Name = "OriginalMsgId",
+            SentValueXPath = "//*[local-name()='AppHdr']/*[local-name()='MsgId'] | //*[local-name()='GrpHdr']/*[local-name()='MsgId']",
+            ResponseTargetXPath = "//*[local-name()='OrgnlMsgId']"
+        },
+        // Investigation case id (camt.055 ↔ camt.029). The case identification is per-system; rewrite
+        // the response's Case/Id from A's value to B's. Confirm the exact element against the Catálogo.
+        new ResponseTransformRule
+        {
+            Name = "InvestigationCaseId",
+            SentValueXPath = "//*[local-name()='Case']/*[local-name()='Id']",
+            ResponseTargetXPath = "//*[local-name()='Case']/*[local-name()='Id']"
+        },
     ];
 }
 

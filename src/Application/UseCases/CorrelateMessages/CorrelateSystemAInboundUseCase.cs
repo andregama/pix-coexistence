@@ -21,6 +21,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
     private readonly ISpiXmlParser _xmlParser;
     private readonly IInboundResponseTransformer _transformer;
     private readonly IKafkaPublisher _publisher;
+    private readonly ISpiMetrics _metrics;
     private readonly TimeProvider _timeProvider;
     private readonly CorrelateInboundRetryOptions _retry;
     private readonly ILogger<CorrelateSystemAInboundUseCase> _logger;
@@ -31,6 +32,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         ISpiXmlParser xmlParser,
         IInboundResponseTransformer transformer,
         IKafkaPublisher publisher,
+        ISpiMetrics metrics,
         IOptions<CorrelateInboundRetryOptions> retryOptions,
         TimeProvider timeProvider,
         ILogger<CorrelateSystemAInboundUseCase> logger)
@@ -40,6 +42,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _xmlParser = xmlParser;
         _transformer = transformer;
         _publisher = publisher;
+        _metrics = metrics;
         _retry = retryOptions.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -56,8 +59,9 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             return;
         }
 
-        var idempotentId = _xmlParser.ExtractIdempotentId(mapped.XmlMsg, msgType);
+        var idempotentId = _xmlParser.ExtractCorrelationKey(mapped.XmlMsg, msgType);
         var originalId = _xmlParser.ExtractOriginalIdempotentId(mapped.XmlMsg, msgType);
+        var correlationSource = _xmlParser.GetCorrelationSource(msgType);
         string? msgId = null;
         try { msgId = _xmlParser.ExtractMessageId(mapped.XmlMsg); }
         catch { /* non-critical */ }
@@ -67,6 +71,8 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         {
             var created = SpiReceivedMsg.CreateFromSystemA(
                 idempotentId, msgType, msgId, mapped.XmlMsg, mapped.Problem, originalId);
+            created.SetCorrelationSource(correlationSource);
+            _metrics.RecordCorrelationSource(correlationSource);
             await _receivedMsgRepo.AddAsync(created, ct);
         }
         else
