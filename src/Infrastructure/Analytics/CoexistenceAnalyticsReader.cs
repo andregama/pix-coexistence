@@ -3,6 +3,8 @@ using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using System.Linq.Expressions;
 
 namespace ConvivenciaPix.Infrastructure.Analytics;
 
@@ -15,26 +17,49 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
     private const int RecentErrorLimit = 50;
     private const string UnknownLabel = "Unknown";
 
-    private readonly CoexistenceDbContext _db;
+    /// <summary>
+    /// Proxy-synthesised SPI Echo reply (pibr.002). It has no System A ↔ System B coexistence flow,
+    /// so it is excluded from every analytics count.
+    /// </summary>
+    private const string ExcludedMsgType = "pibr.002";
 
-    public CoexistenceAnalyticsReader(CoexistenceDbContext db) => _db = db;
+    private readonly CoexistenceDbContext _db;
+    private readonly DateTime _consumptionTrackingSince;
+
+    public CoexistenceAnalyticsReader(CoexistenceDbContext db, IOptions<AnalyticsOptions> options)
+    {
+        _db = db;
+        _consumptionTrackingSince = options.Value.ConsumptionTrackingSince;
+    }
 
     public async Task<CoexistenceSummaryDto> GetSummaryAsync(
         DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
     {
-        var received = FilterByCreatedAt(_db.SpiReceivedMsgs.AsNoTracking(), from, to);
-        var sent = FilterByCreatedAt(_db.SpiSentMsgs.AsNoTracking(), from, to);
+        var cutoff = _consumptionTrackingSince;
 
-        var discrepancies = _db.SpiDiscrepancies.AsNoTracking().AsQueryable();
+        // A row counts as consumed by System B if it was explicitly acked (ConsumedAt set), OR it
+        // predates the consumption-tracking columns (created before the cutoff) and was at least
+        // propagated to B — those rows can never have ConsumedAt, so they are backfilled as consumed.
+        Expression<Func<SpiReceivedMsg, bool>> isConsumed =
+            x => x.ConsumedAt != null || (x.CreatedAt < cutoff && x.XmlMsgSystemB != null);
+
+        // Propagated to B but not yet consumed: only rows on/after the cutoff can be "awaiting",
+        // since pre-cutoff propagated rows are treated as already consumed above.
+        Expression<Func<SpiReceivedMsg, bool>> isAwaiting =
+            x => x.XmlMsgSystemB != null && x.ConsumedAt == null && x.CreatedAt >= cutoff;
+
+        var received = FilterReceived(_db.SpiReceivedMsgs.AsNoTracking(), from, to);
+        var sent = FilterSent(_db.SpiSentMsgs.AsNoTracking(), from, to);
+
+        var discrepancies = _db.SpiDiscrepancies.AsNoTracking().Where(x => x.MsgType != ExcludedMsgType);
         if (from is not null) discrepancies = discrepancies.Where(x => x.DetectedAt >= from);
         if (to is not null) discrepancies = discrepancies.Where(x => x.DetectedAt <= to);
 
         var inbound = new InboundFunnelDto(
             ReceivedFromA: await received.CountAsync(x => x.XmlMsgSystemA != null, cancellationToken),
             PropagatedToB: await received.CountAsync(x => x.XmlMsgSystemB != null, cancellationToken),
-            ConsumedByB: await received.CountAsync(x => x.ConsumedAt != null, cancellationToken),
-            AwaitingConsumption: await received.CountAsync(
-                x => x.XmlMsgSystemB != null && x.ConsumedAt == null, cancellationToken),
+            ConsumedByB: await received.CountAsync(isConsumed, cancellationToken),
+            AwaitingConsumption: await received.CountAsync(isAwaiting, cancellationToken),
             PropagationGap: await received.CountAsync(
                 x => x.XmlMsgSystemA != null && x.XmlMsgSystemB == null, cancellationToken));
 
@@ -68,7 +93,8 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
                 MsgType = g.Key,
                 ReceivedFromA = g.Sum(x => x.XmlMsgSystemA != null ? 1L : 0L),
                 PropagatedToB = g.Sum(x => x.XmlMsgSystemB != null ? 1L : 0L),
-                ConsumedByB = g.Sum(x => x.ConsumedAt != null ? 1L : 0L),
+                ConsumedByB = g.Sum(x =>
+                    (x.ConsumedAt != null || (x.CreatedAt < cutoff && x.XmlMsgSystemB != null)) ? 1L : 0L),
             })
             .ToListAsync(cancellationToken);
         var byMsgType = byMsgTypeRaw
@@ -141,15 +167,18 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             .ToList();
     }
 
-    private static IQueryable<SpiReceivedMsg> FilterByCreatedAt(IQueryable<SpiReceivedMsg> q, DateTime? from, DateTime? to)
+    // pibr.002 (proxy-synthesised Echo reply) is excluded from all counts; date bounds apply to CreatedAt.
+    private static IQueryable<SpiReceivedMsg> FilterReceived(IQueryable<SpiReceivedMsg> q, DateTime? from, DateTime? to)
     {
+        q = q.Where(x => x.MsgType != ExcludedMsgType);
         if (from is not null) q = q.Where(x => x.CreatedAt >= from);
         if (to is not null) q = q.Where(x => x.CreatedAt <= to);
         return q;
     }
 
-    private static IQueryable<SpiSentMsg> FilterByCreatedAt(IQueryable<SpiSentMsg> q, DateTime? from, DateTime? to)
+    private static IQueryable<SpiSentMsg> FilterSent(IQueryable<SpiSentMsg> q, DateTime? from, DateTime? to)
     {
+        q = q.Where(x => x.MsgType != ExcludedMsgType);
         if (from is not null) q = q.Where(x => x.CreatedAt >= from);
         if (to is not null) q = q.Where(x => x.CreatedAt <= to);
         return q;

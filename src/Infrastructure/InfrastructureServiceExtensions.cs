@@ -39,6 +39,7 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<ISpiSentMsgRepository, SpiSentMsgRepository>();
         services.AddScoped<ISpiReceivedMsgRepository, SpiReceivedMsgRepository>();
         services.AddScoped<ISpiDiscrepancyRepository, SpiDiscrepancyRepository>();
+        services.Configure<Analytics.AnalyticsOptions>(configuration.GetSection("Analytics"));
         services.AddScoped<ICoexistenceAnalyticsReader, Analytics.CoexistenceAnalyticsReader>();
 
         var spiMetrics = new SpiMetrics();

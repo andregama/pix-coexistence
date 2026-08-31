@@ -2,6 +2,8 @@ using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Infrastructure.Analytics;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Analytics;
@@ -11,6 +13,9 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
     private readonly SqlServerFixture _fixture;
 
     public CoexistenceAnalyticsReaderTests(SqlServerFixture fixture) => _fixture = fixture;
+
+    private CoexistenceAnalyticsReader Reader(DateTime cutoff) =>
+        new(_fixture.CreateDbContext(), Options.Create(new AnalyticsOptions { ConsumptionTrackingSince = cutoff }));
 
     // Each test tags its rows with a unique msg-type token and filters the summary to that
     // token's rows via ByMsgType, so tests stay independent on the shared container.
@@ -36,21 +41,75 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
             await ctx.SaveChangesAsync();
         }
 
-        var reader = new CoexistenceAnalyticsReader(_fixture.CreateDbContext());
-        var summary = await reader.GetSummaryAsync(from: null, to: null);
+        // Cutoff in the past → the seeded (now) rows use real ConsumedAt tracking.
+        var summary = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetSummaryAsync(from: null, to: null);
 
         var mine = summary.ByMsgType.Single(x => x.MsgType == type);
         mine.ReceivedFromA.Should().Be(4);
         mine.PropagatedToB.Should().Be(3);
-        mine.ConsumedByB.Should().Be(2);
+        mine.ConsumedByB.Should().Be(2); // done + err (await is not acked and is post-cutoff)
 
-        // Correlation source split includes this test's rows.
         summary.CorrelationSource.Should().Contain(x => x.Label == "DerivedKey");
         summary.CorrelationSource.Should().Contain(x => x.Label == "MessageKey");
 
-        // Discrepancy + recent error surfaced.
         summary.Errors.Discrepancies.Should().BeGreaterThanOrEqualTo(1);
         summary.RecentErrors.Should().Contain(e => e.ErrorCode == "AB09" && e.System == "B");
+    }
+
+    [Fact]
+    public async Task Summary_PreCutoffPropagatedRow_CountsAsConsumed()
+    {
+        var type = "t-" + Guid.NewGuid().ToString("N")[..8];
+        var cutoff = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Propagated to B, never acked, created BEFORE cutoff → backfilled as consumed.
+            ctx.SpiReceivedMsgs.Add(FromA("pre", type, xmlB: true, consumed: false, source: "MessageKey"));
+            // Propagated to B, never acked, created AFTER cutoff → still awaiting (not consumed).
+            ctx.SpiReceivedMsgs.Add(FromA("post", type, xmlB: true, consumed: false, source: "MessageKey"));
+            // Explicitly acked → consumed regardless of date.
+            ctx.SpiReceivedMsgs.Add(FromA("acked", type, xmlB: true, consumed: true, source: "MessageKey"));
+            await ctx.SaveChangesAsync();
+
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1}",
+                cutoff.AddDays(-1), "pre" + type);
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1}",
+                cutoff.AddDays(1), "post" + type);
+        }
+
+        var summary = await Reader(cutoff).GetSummaryAsync(from: null, to: null);
+
+        var mine = summary.ByMsgType.Single(x => x.MsgType == type);
+        mine.PropagatedToB.Should().Be(3);
+        mine.ConsumedByB.Should().Be(2); // pre (backfilled) + acked; post is still awaiting
+    }
+
+    [Fact]
+    public async Task Summary_ExcludesPibr002FromCounts()
+    {
+        var type = "t-" + Guid.NewGuid().ToString("N")[..8];
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            ctx.SpiReceivedMsgs.Add(FromA("ok", type, xmlB: true, consumed: true, source: "MessageKey"));
+
+            // A pibr.002 row (proxy Echo reply) with an error — must be excluded everywhere.
+            var echo = SpiReceivedMsg.CreateFromSystemA("echo" + type, "pibr.002", null, "<a/>", "AB99");
+            echo.SetSystemBXml("<b/>", "AB99");
+            ctx.SpiReceivedMsgs.Add(echo);
+            await ctx.SaveChangesAsync();
+        }
+
+        var summary = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetSummaryAsync(from: null, to: null);
+
+        summary.ByMsgType.Should().NotContain(x => x.MsgType == "pibr.002");
+        summary.RecentErrors.Should().NotContain(e => e.ErrorCode == "AB99");
+        summary.ByMsgType.Should().Contain(x => x.MsgType == type);
     }
 
     private static SpiReceivedMsg FromA(string key, string type, bool xmlB, bool consumed, string source)
