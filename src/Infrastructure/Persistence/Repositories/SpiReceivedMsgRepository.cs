@@ -26,6 +26,25 @@ public sealed class SpiReceivedMsgRepository : ISpiReceivedMsgRepository
         await _db.SaveChangesAsync(cancellationToken);
     }
 
+    public Task<int> MarkConsumedByResourceIdsAsync(
+        IReadOnlyList<string> piResourceIds, DateTime consumedAt, CancellationToken cancellationToken = default)
+    {
+        if (piResourceIds.Count == 0)
+            return Task.FromResult(0);
+
+        // Set-based update keyed on IX_SpiReceivedMsg_PiResourceId. First-wins: only rows not
+        // already consumed are touched, so re-acked/duplicate stream commits stay idempotent.
+        return _db.SpiReceivedMsgs
+            .Where(x => x.PiResourceId != null
+                        && piResourceIds.Contains(x.PiResourceId)
+                        && x.ConsumedAt == null)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(x => x.ConsumedAt, consumedAt)
+                    .SetProperty(x => x.UpdatedAt, consumedAt),
+                cancellationToken);
+    }
+
     public Task<int> DeleteOlderThanAsync(DateTime cutoff, CancellationToken cancellationToken = default) =>
         _db.SpiReceivedMsgs
             .Where(x => x.CreatedAt < cutoff)

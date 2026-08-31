@@ -12,6 +12,10 @@ public sealed class SpiReceivedMsg
     public string? SystemBErrorCode { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
+    /// <summary>Outbound-stream resource id assigned when the signed message is enqueued for System B to pull.</summary>
+    public string? PiResourceId { get; private set; }
+    /// <summary>UTC time System B pulled + acked this message. Null until consumed. See <see cref="MarkConsumed"/>.</summary>
+    public DateTime? ConsumedAt { get; private set; }
     public DateTime CreatedAt { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
 
@@ -85,5 +89,22 @@ public sealed class SpiReceivedMsg
     {
         if (CorrelationSource is null && !string.IsNullOrWhiteSpace(source))
             CorrelationSource = source;
+    }
+
+    /// <summary>Records the outbound-stream resource id assigned when the signed XML is enqueued for System B.</summary>
+    public void SetPiResourceId(string? piResourceId)
+    {
+        if (!string.IsNullOrWhiteSpace(piResourceId))
+            PiResourceId = piResourceId;
+    }
+
+    /// <summary>Marks the message as consumed by System B (pulled + acked). First-wins.</summary>
+    public void MarkConsumed()
+    {
+        if (ConsumedAt is null)
+        {
+            ConsumedAt = DateTime.UtcNow;
+            UpdatedAt = DateTime.UtcNow;
+        }
     }
 }

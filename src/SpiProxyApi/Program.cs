@@ -132,6 +132,11 @@ app.UseSwaggerUI(c =>
 
 app.UseRateLimiter();
 
+// Serve the local coexistence-analytics dashboard (wwwroot/analytics.html) same-origin,
+// so it can call /api/v1/analytics/* with relative URLs and no CORS configuration.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();

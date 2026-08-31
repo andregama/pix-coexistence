@@ -1,6 +1,7 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.PullStream;
+using ConvivenciaPix.Domain.Repositories;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -12,12 +13,13 @@ namespace ConvivenciaPix.Application.Tests.UseCases.PullStream;
 public sealed class PullStreamUseCaseTests
 {
     private readonly Mock<IOutboundStream> _streamMock = new();
+    private readonly Mock<ISpiReceivedMsgRepository> _receivedMsgRepoMock = new();
     private readonly PullStreamUseCase _sut;
 
     public PullStreamUseCaseTests()
     {
         var options = Options.Create(new PullStreamOptions { LongPollSeconds = 0, MaxMessagesPerMultipart = 10 });
-        _sut = new PullStreamUseCase(_streamMock.Object, options, NullLogger<PullStreamUseCase>.Instance);
+        _sut = new PullStreamUseCase(_streamMock.Object, _receivedMsgRepoMock.Object, options, NullLogger<PullStreamUseCase>.Instance);
     }
 
     [Fact]
@@ -47,6 +49,8 @@ public sealed class PullStreamUseCaseTests
         var result = await _sut.ExecuteAsync(streamId: "prev", multipart: true, ispb: "11111111", CancellationToken.None);
 
         _streamMock.Verify(s => s.CommitAsync(It.Is<IReadOnlyList<string>>(l => l.Single() == "rid-prev"), It.IsAny<CancellationToken>()), Times.Once);
+        _receivedMsgRepoMock.Verify(r => r.MarkConsumedByResourceIdsAsync(
+            It.Is<IReadOnlyList<string>>(l => l.Single() == "rid-prev"), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
         result.Messages.Should().BeEmpty();
         result.NextStreamId.Should().NotBeNullOrWhiteSpace();
     }

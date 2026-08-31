@@ -1,5 +1,6 @@
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.UseCases.PullStream;
+using ConvivenciaPix.Domain.Repositories;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -10,11 +11,12 @@ namespace ConvivenciaPix.Application.Tests.UseCases.PullStream;
 public sealed class AckStreamUseCaseTests
 {
     private readonly Mock<IOutboundStream> _streamMock = new();
+    private readonly Mock<ISpiReceivedMsgRepository> _receivedMsgRepoMock = new();
     private readonly AckStreamUseCase _sut;
 
     public AckStreamUseCaseTests()
     {
-        _sut = new AckStreamUseCase(_streamMock.Object, NullLogger<AckStreamUseCase>.Instance);
+        _sut = new AckStreamUseCase(_streamMock.Object, _receivedMsgRepoMock.Object, NullLogger<AckStreamUseCase>.Instance);
     }
 
     [Fact]
@@ -27,6 +29,8 @@ public sealed class AckStreamUseCaseTests
 
         ok.Should().BeTrue();
         _streamMock.Verify(s => s.CommitAsync(It.Is<IReadOnlyList<string>>(l => l.Count == 2), It.IsAny<CancellationToken>()), Times.Once);
+        _receivedMsgRepoMock.Verify(r => r.MarkConsumedByResourceIdsAsync(
+            It.Is<IReadOnlyList<string>>(l => l.Count == 2), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

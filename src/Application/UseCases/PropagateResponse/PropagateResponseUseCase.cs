@@ -62,7 +62,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         SpiReceivedMsg msg;
         using (SpiActivitySource.StartProxyActivity("proxy.db-upsert"))
         {
-            msg = await UpsertReceivedMsgAsync(ready, signedXml, cancellationToken);
+            msg = await UpsertReceivedMsgAsync(ready, signedXml, piResourceId, cancellationToken);
         }
 
         _metrics.RecordProxyResponseLatency(sw.Elapsed.TotalMilliseconds);
@@ -75,7 +75,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
     }
 
     private async Task<SpiReceivedMsg> UpsertReceivedMsgAsync(
-        SystemBInboundReadyDto ready, string signedXml, CancellationToken ct)
+        SystemBInboundReadyDto ready, string signedXml, string piResourceId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repo = scope.ServiceProvider.GetRequiredService<ISpiReceivedMsgRepository>();
@@ -84,6 +84,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         if (existing is not null)
         {
             existing.SetSystemBXml(signedXml);
+            existing.SetPiResourceId(piResourceId);
             await repo.UpdateAsync(existing, ct);
             return existing;
         }
@@ -92,6 +93,7 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         // ready event, so the row usually exists. Create it here only if that ordering was missed.
         var created = SpiReceivedMsg.CreateFromSystemB(
             ready.IdempotentId, ready.MsgType, msgId: null, signedXml, errorCode: null);
+        created.SetPiResourceId(piResourceId);
         await repo.AddAsync(created, ct);
         return created;
     }

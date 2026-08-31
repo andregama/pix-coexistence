@@ -1,4 +1,5 @@
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Domain.Repositories;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
@@ -14,16 +15,19 @@ public sealed class PullStreamOptions
 public sealed class PullStreamUseCase : IPullStreamUseCase
 {
     private readonly IOutboundStream _stream;
+    private readonly ISpiReceivedMsgRepository _receivedMsgRepository;
     private readonly TimeSpan _longPoll;
     private readonly int _maxMultipart;
     private readonly ILogger<PullStreamUseCase> _logger;
 
     public PullStreamUseCase(
         IOutboundStream stream,
+        ISpiReceivedMsgRepository receivedMsgRepository,
         IOptions<PullStreamOptions> options,
         ILogger<PullStreamUseCase> logger)
     {
         _stream = stream;
+        _receivedMsgRepository = receivedMsgRepository;
         _longPoll = TimeSpan.FromSeconds(options.Value.LongPollSeconds);
         _maxMultipart = options.Value.MaxMessagesPerMultipart;
         _logger = logger;
@@ -38,7 +42,9 @@ public sealed class PullStreamUseCase : IPullStreamUseCase
             if (previous is { Count: > 0 })
             {
                 await _stream.CommitAsync(previous, cancellationToken);
-                _logger.LogDebug("Committed {Count} message(s) from previous stream {StreamId}", previous.Count, streamId);
+                // Implicit ack durably records consumption, mirroring the explicit DELETE ack path.
+                var marked = await _receivedMsgRepository.MarkConsumedByResourceIdsAsync(previous, DateTime.UtcNow, cancellationToken);
+                _logger.LogDebug("Committed {Count} message(s) from previous stream {StreamId}; marked {Marked} consumed", previous.Count, streamId, marked);
             }
         }
 

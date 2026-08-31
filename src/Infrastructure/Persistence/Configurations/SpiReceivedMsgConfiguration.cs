@@ -26,12 +26,18 @@ public sealed class SpiReceivedMsgConfiguration : IEntityTypeConfiguration<SpiRe
         builder.Property(x => x.SystemAErrorCode).HasColumnType("VARCHAR(MAX)");
         builder.Property(x => x.SystemBErrorCode).HasColumnType("VARCHAR(MAX)");
         builder.Property(x => x.CorrelationSource).HasColumnType("VARCHAR(20)");
+        builder.Property(x => x.PiResourceId).HasColumnType("VARCHAR(255)");
+        builder.Property(x => x.ConsumedAt).HasColumnType("DATETIME2");
         builder.Property(x => x.CreatedAt).HasColumnType("DATETIME2").IsRequired();
         builder.Property(x => x.UpdatedAt).HasColumnType("DATETIME2");
 
         builder.HasIndex(x => x.MsgId)
             .HasDatabaseName("IX_SpiReceivedMsg_MsgId")
             .HasFilter("[MsgId] IS NOT NULL");
+
+        builder.HasIndex(x => x.PiResourceId)
+            .HasDatabaseName("IX_SpiReceivedMsg_PiResourceId")
+            .HasFilter("[PiResourceId] IS NOT NULL");
 
         builder.HasIndex(x => x.OriginalMsgIdempotentId)
             .HasDatabaseName("IX_SpiReceivedMsg_OriginalMsgIdempotentId")
