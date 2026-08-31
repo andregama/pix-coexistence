@@ -1,16 +1,18 @@
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ConvivenciaPix.SpiProxyApi.Controllers;
 
 /// <summary>
-/// Read-only coexistence-flow analytics for the local dashboard (wwwroot/analytics.html).
-/// Anonymous by design — intended for local/homologation use only, not exposed to Bacen.
+/// Read-only coexistence-flow analytics for the standalone dashboard (frontend/analytics).
+/// Anonymous + CORS-enabled by design — intended for local/homologation use only, not exposed to Bacen.
 /// </summary>
 [ApiController]
 [AllowAnonymous]
+[EnableCors("analytics-frontend")]
 [Route("api/v1/analytics")]
 public sealed class AnalyticsController : ControllerBase
 {

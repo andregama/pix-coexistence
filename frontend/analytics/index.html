@@ -32,10 +32,11 @@
     header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .controls label { color: var(--muted); font-size: 12px; }
-    input[type="datetime-local"], select {
+    input[type="datetime-local"], input[type="url"], select {
       background: var(--bg); color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 6px 8px; font: inherit;
     }
+    input[type="url"] { min-width: 230px; }
     button {
       background: var(--accent); color: #fff; border: 0; border-radius: 8px;
       padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
@@ -43,6 +44,11 @@
     button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
     button:active { transform: translateY(1px); }
     main { padding: 20px 24px 48px; max-width: 1200px; margin: 0 auto; }
+    .apibar {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .apibar label { color: var(--muted); font-size: 12px; }
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
     .tile {
       background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
@@ -105,6 +111,13 @@
     </div>
   </header>
 
+  <div class="apibar">
+    <label for="apiBase">API base URL</label>
+    <input type="url" id="apiBase" placeholder="http://localhost:5152" spellcheck="false" />
+    <button class="secondary" id="saveApi">Save &amp; reload</button>
+    <span id="apiHint" class="sub" style="color:var(--muted)"></span>
+  </div>
+
   <main>
     <section class="tiles" id="tiles"></section>
 
@@ -140,6 +153,17 @@
     const fmt = (n) => (n ?? 0).toLocaleString();
     const pct = (n, d) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    // --- API base URL: configurable, persisted per-browser, overridable via ?api= --------------
+    const API_KEY = "coex.analytics.apiBase";
+    const DEFAULT_API = "http://localhost:5152";
+    function getApiBase() {
+      const fromQuery = new URLSearchParams(location.search).get("api");
+      if (fromQuery) { try { localStorage.setItem(API_KEY, fromQuery); } catch {} return fromQuery; }
+      let stored = null;
+      try { stored = localStorage.getItem(API_KEY); } catch {}
+      return (stored || DEFAULT_API).replace(/\/+$/, "");
+    }
 
     let timer = null;
 
@@ -230,6 +254,7 @@
 
     async function load() {
       const status = $("status");
+      const apiBase = getApiBase();
       status.className = "";
       status.textContent = "refreshing…";
       const params = new URLSearchParams();
@@ -238,7 +263,7 @@
       if (from) params.set("from", from);
       if (to) params.set("to", to);
       try {
-        const res = await fetch(`/api/v1/analytics/summary?${params.toString()}`, { headers: { Accept: "application/json" } });
+        const res = await fetch(`${apiBase}/api/v1/analytics/summary?${params.toString()}`, { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const s = await res.json();
         renderTiles(s);
@@ -250,7 +275,7 @@
         status.textContent = "updated " + new Date().toLocaleTimeString();
       } catch (e) {
         status.className = "error";
-        status.textContent = "failed to load: " + e.message;
+        status.textContent = `failed to load from ${apiBase}: ${e.message}`;
       }
     }
 
@@ -259,6 +284,16 @@
       const secs = parseInt($("auto").value, 10);
       if (secs > 0) timer = setInterval(load, secs * 1000);
     }
+
+    // Wire API base input.
+    $("apiBase").value = getApiBase();
+    $("apiHint").textContent = `default ${DEFAULT_API}`;
+    $("saveApi").addEventListener("click", () => {
+      const v = $("apiBase").value.trim().replace(/\/+$/, "");
+      try { localStorage.setItem(API_KEY, v || DEFAULT_API); } catch {}
+      load();
+    });
+    $("apiBase").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveApi").click(); });
 
     $("refresh").addEventListener("click", load);
     $("clear").addEventListener("click", () => { $("from").value = ""; $("to").value = ""; load(); });

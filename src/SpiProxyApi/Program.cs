@@ -15,9 +15,27 @@ using OpenTelemetry.Trace;
 using System.Reflection;
 using System.Threading.RateLimiting;
 
+const string AnalyticsCorsPolicy = "analytics-frontend";
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// CORS for the standalone analytics dashboard. Origins are configurable via
+// Analytics:Cors:AllowedOrigins; when unset it allows any origin (the endpoint is
+// anonymous, read-only and meant for local/homologation use).
+builder.Services.AddCors(options =>
+{
+    var allowedOrigins = builder.Configuration
+        .GetSection("Analytics:Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+    options.AddPolicy(AnalyticsCorsPolicy, policy =>
+    {
+        if (allowedOrigins.Length > 0)
+            policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod();
+        else
+            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+    });
+});
 
 // Swagger / OpenAPI documentation
 builder.Services.AddEndpointsApiExplorer();
@@ -132,10 +150,9 @@ app.UseSwaggerUI(c =>
 
 app.UseRateLimiter();
 
-// Serve the local coexistence-analytics dashboard (wwwroot/analytics.html) same-origin,
-// so it can call /api/v1/analytics/* with relative URLs and no CORS configuration.
-app.UseDefaultFiles();
-app.UseStaticFiles();
+// CORS for the standalone analytics frontend (frontend/analytics), which calls the analytics
+// endpoint cross-origin. Scoped to that named policy + applied only on the AnalyticsController.
+app.UseCors(AnalyticsCorsPolicy);
 
 app.UseHttpsRedirection();
 app.UseAuthentication();
