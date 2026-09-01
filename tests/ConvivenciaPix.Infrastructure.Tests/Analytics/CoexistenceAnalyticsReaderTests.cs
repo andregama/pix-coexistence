@@ -112,6 +112,69 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         summary.ByMsgType.Should().Contain(x => x.MsgType == type);
     }
 
+    [Fact]
+    public async Task Summary_OutboundByMsgType_ReportsSentAndCorrelatedPerType()
+    {
+        var type = "o-" + Guid.NewGuid().ToString("N")[..8];
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Two correlated (both sides) + one single-sided (A only) for the same type.
+            ctx.SpiSentMsgs.Add(SentPair(type, "a1", correlated: true));
+            ctx.SpiSentMsgs.Add(SentPair(type, "a2", correlated: true));
+            ctx.SpiSentMsgs.Add(SentPair(type, "a3", correlated: false));
+            await ctx.SaveChangesAsync();
+        }
+
+        var summary = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetSummaryAsync(from: null, to: null);
+
+        var mine = summary.OutboundByMsgType.Single(x => x.MsgType == type);
+        mine.Total.Should().Be(3);
+        mine.Correlated.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Summary_InboundLatency_MeasuresConsumedRows()
+    {
+        var type = "l-" + Guid.NewGuid().ToString("N")[..8];
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            ctx.SpiReceivedMsgs.Add(FromA("lat1", type, xmlB: true, consumed: true, source: "MessageKey"));
+            ctx.SpiReceivedMsgs.Add(FromA("lat2", type, xmlB: true, consumed: true, source: "MessageKey"));
+            await ctx.SaveChangesAsync();
+
+            // Force known end-to-end gaps: 1000 ms and 3000 ms.
+            var baseTime = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0}, ConsumedAt = {1} WHERE IdempotentId = {2}",
+                baseTime, baseTime.AddMilliseconds(1000), "lat1" + type);
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0}, ConsumedAt = {1} WHERE IdempotentId = {2}",
+                baseTime, baseTime.AddMilliseconds(3000), "lat2" + type);
+        }
+
+        // Scope the window so only this test's two rows contribute to the aggregate.
+        var summary = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetSummaryAsync(
+                from: new DateTime(2026, 1, 1, 11, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2026, 1, 1, 13, 0, 0, DateTimeKind.Utc));
+
+        summary.Latency.InboundEndToEnd.Count.Should().Be(2);
+        summary.Latency.InboundEndToEnd.AvgMs.Should().Be(2000);
+        summary.Latency.InboundEndToEnd.MaxMs.Should().Be(3000);
+    }
+
+    private static SpiSentMsg SentPair(string type, string key, bool correlated)
+    {
+        var msg = SpiSentMsg.Create(key + type, type);
+        msg.UpdateFromSystemA("MSGA-" + key, "<a/>", null);
+        if (correlated)
+            msg.UpdateFromSystemB("MSGB-" + key, "<b/>", null);
+        return msg;
+    }
+
     private static SpiReceivedMsg FromA(string key, string type, bool xmlB, bool consumed, string source)
     {
         var msg = SpiReceivedMsg.CreateFromSystemA(key + type, type, msgId: null, "<a/>", errorCode: null);

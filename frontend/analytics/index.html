@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coexistence Analytics</title>
+  <title>Análise de Convivência</title>
   <style>
     :root {
       --bg: #f5f6f8; --panel: #ffffff; --border: #e2e5ea; --text: #1c2330;
@@ -92,34 +92,34 @@
 <body>
   <header>
     <div>
-      <h1>Coexistence Analytics</h1>
-      <div class="sub"><span id="replLabel"></span> · <span id="status">loading…</span></div>
+      <h1>Análise de Convivência</h1>
+      <div class="sub"><span id="replLabel"></span> · <span id="status">carregando…</span></div>
     </div>
     <div class="controls">
-      <label>From <input type="datetime-local" id="from" /></label>
-      <label>To <input type="datetime-local" id="to" /></label>
+      <label>De <input type="datetime-local" id="from" /></label>
+      <label>Até <input type="datetime-local" id="to" /></label>
       <label>Auto
         <select id="auto">
-          <option value="0">off</option>
+          <option value="0">desligado</option>
           <option value="15" selected>15s</option>
           <option value="30">30s</option>
           <option value="60">60s</option>
         </select>
       </label>
-      <button class="secondary" id="clear">Clear range</button>
-      <button id="refresh">Refresh</button>
+      <button class="secondary" id="clear">Limpar período</button>
+      <button id="refresh">Atualizar</button>
     </div>
   </header>
 
   <div class="apibar">
-    <label for="apiBase">API base URL</label>
+    <label for="apiBase">URL base da API</label>
     <input type="url" id="apiBase" placeholder="http://localhost:5152" spellcheck="false" />
     <span style="width:1px;height:22px;background:var(--border)"></span>
-    <label for="nameA">System A name</label>
-    <input type="text" id="nameA" placeholder="System A" spellcheck="false" style="min-width:130px" />
-    <label for="nameB">System B name</label>
-    <input type="text" id="nameB" placeholder="System B" spellcheck="false" style="min-width:130px" />
-    <button class="secondary" id="saveSettings">Save &amp; reload</button>
+    <label for="nameA">Nome do Sistema A</label>
+    <input type="text" id="nameA" placeholder="Sistema A" spellcheck="false" style="min-width:130px" />
+    <label for="nameB">Nome do Sistema B</label>
+    <input type="text" id="nameB" placeholder="Sistema B" spellcheck="false" style="min-width:130px" />
+    <button class="secondary" id="saveSettings">Salvar e recarregar</button>
     <span id="apiHint" class="sub" style="color:var(--muted)"></span>
   </div>
 
@@ -128,26 +128,34 @@
 
     <div class="grid">
       <div class="panel">
-        <h2>Replication funnel (inbound SPI→PSP)</h2>
+        <h2>Funil de replicação (entrada SPI→PSP)</h2>
         <div id="funnel"></div>
       </div>
       <div class="panel">
-        <h2>Correlation source (RF-05)</h2>
-        <div id="correlation"></div>
+        <h2>Tempos de replicação</h2>
+        <div id="latency"></div>
       </div>
       <div class="panel">
-        <h2>By message type</h2>
+        <h2>Entrada por tipo de mensagem</h2>
         <div id="bytype"></div>
       </div>
       <div class="panel">
-        <h2>Discrepancies by field</h2>
+        <h2>Saída por tipo de mensagem</h2>
+        <div id="outbytype"></div>
+      </div>
+      <div class="panel">
+        <h2>Origem da correlação (RF-05)</h2>
+        <div id="correlation"></div>
+      </div>
+      <div class="panel">
+        <h2>Divergências por campo</h2>
         <div id="discrepancies"></div>
       </div>
     </div>
 
     <div class="grid">
       <div class="panel" style="grid-column: 1 / -1;">
-        <h2>Recent errors</h2>
+        <h2>Erros recentes</h2>
         <div id="errors"></div>
       </div>
     </div>
@@ -155,17 +163,26 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const fmt = (n) => (n ?? 0).toLocaleString();
-    const pct = (n, d) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
+    const LOCALE = "pt-BR";
+    const fmt = (n) => (n ?? 0).toLocaleString(LOCALE);
+    // Localized percentage string (pt-BR decimal comma), e.g. "96,6".
+    const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0).toLocaleString(LOCALE, { maximumFractionDigits: 1 });
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    // Humanise a millisecond duration into pt-BR "ms" / "s" / "min".
+    const dur = (ms) => {
+      if (ms == null) return "—";
+      if (ms < 1000) return `${Math.round(ms)} ms`;
+      if (ms < 60000) return `${(ms / 1000).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} s`;
+      return `${(ms / 60000).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} min`;
+    };
 
     // --- Settings: configurable, persisted per-browser ---------------------------------------
     const API_KEY = "coex.analytics.apiBase";
     const NAME_A_KEY = "coex.analytics.nameA";
     const NAME_B_KEY = "coex.analytics.nameB";
     const DEFAULT_API = "http://localhost:5152";
-    const DEFAULT_NAME_A = "System A";
-    const DEFAULT_NAME_B = "System B";
+    const DEFAULT_NAME_A = "Sistema A";
+    const DEFAULT_NAME_B = "Sistema B";
     function lsGet(key, fallback) { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } }
     function getApiBase() {
       const fromQuery = new URLSearchParams(location.search).get("api");
@@ -186,12 +203,12 @@
       const totalErrors = err.inboundSystemAErrors + err.inboundSystemBErrors +
         err.outboundSystemAErrors + err.outboundSystemBErrors;
       const tiles = [
-        { k: `Received from ${A}`, v: inb.receivedFromA, cls: "accent-a", d: `inbound msgs seen on ${A}` },
-        { k: `Propagated ${A}→${B}`, v: inb.propagatedToB, cls: "accent-b", d: pct(inb.propagatedToB, inb.receivedFromA) + "% of received" },
-        { k: `Consumed by ${B}`, v: inb.consumedByB, cls: "accent-ok", d: pct(inb.consumedByB, inb.propagatedToB) + "% of propagated" },
-        { k: "Awaiting consumption", v: inb.awaitingConsumption, cls: "accent-warn", d: "signed, not yet acked" },
-        { k: "Propagation gap", v: inb.propagationGap, cls: "accent-warn", d: `on ${A}, never sent to ${B}` },
-        { k: "Errors", v: totalErrors, cls: "accent-err", d: fmt(err.discrepancies) + " discrepancies" },
+        { k: `Recebidas de ${A}`, v: inb.receivedFromA, cls: "accent-a", d: `mensagens de entrada vistas em ${A}` },
+        { k: `Propagadas ${A}→${B}`, v: inb.propagatedToB, cls: "accent-b", d: pct(inb.propagatedToB, inb.receivedFromA) + "% das recebidas" },
+        { k: `Consumidas por ${B}`, v: inb.consumedByB, cls: "accent-ok", d: pct(inb.consumedByB, inb.propagatedToB) + "% das propagadas" },
+        { k: "Aguardando consumo", v: inb.awaitingConsumption, cls: "accent-warn", d: "assinadas, ainda sem confirmação" },
+        { k: "Lacuna de propagação", v: inb.propagationGap, cls: "accent-warn", d: `em ${A}, nunca enviadas para ${B}` },
+        { k: "Erros", v: totalErrors, cls: "accent-err", d: fmt(err.discrepancies) + " divergências" },
       ];
       $("tiles").innerHTML = tiles.map(t =>
         `<div class="tile ${t.cls}"><div class="k">${esc(t.k)}</div><div class="v">${fmt(t.v)}</div><div class="d">${esc(t.d)}</div></div>`
@@ -202,9 +219,9 @@
       const inb = s.inbound;
       const base = Math.max(inb.receivedFromA, 1);
       const rows = [
-        { lbl: `Received (${nameA()})`, val: inb.receivedFromA, color: "var(--a)" },
-        { lbl: `Propagated (${nameB()})`, val: inb.propagatedToB, color: "var(--b)" },
-        { lbl: `Consumed (${nameB()})`, val: inb.consumedByB, color: "var(--ok)" },
+        { lbl: `Recebidas (${nameA()})`, val: inb.receivedFromA, color: "var(--a)" },
+        { lbl: `Propagadas (${nameB()})`, val: inb.propagatedToB, color: "var(--b)" },
+        { lbl: `Consumidas (${nameB()})`, val: inb.consumedByB, color: "var(--ok)" },
       ];
       $("funnel").innerHTML = rows.map(r => {
         const w = Math.max((r.val / base) * 100, r.val > 0 ? 2 : 0);
@@ -218,7 +235,7 @@
 
     function renderLabelCounts(elId, items, colorVar) {
       const el = $(elId);
-      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">No data in range.</div>`; return; }
+      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">Sem dados no período.</div>`; return; }
       const max = Math.max(...items.map(i => i.count), 1);
       el.innerHTML = `<table><tbody>${items.map(i => `
         <tr>
@@ -231,9 +248,9 @@
     function renderByType(s) {
       const items = s.byMsgType;
       const el = $("bytype");
-      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">No data in range.</div>`; return; }
+      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">Sem dados no período.</div>`; return; }
       el.innerHTML = `<table>
-        <thead><tr><th>Type</th><th class="num">Recv ${esc(nameA())}</th><th class="num">Prop ${esc(nameB())}</th><th class="num">Cons ${esc(nameB())}</th></tr></thead>
+        <thead><tr><th>Tipo</th><th class="num">Receb. ${esc(nameA())}</th><th class="num">Prop. ${esc(nameB())}</th><th class="num">Cons. ${esc(nameB())}</th></tr></thead>
         <tbody>${items.map(t => `
           <tr>
             <td class="mono">${esc(t.msgType)}</td>
@@ -243,16 +260,61 @@
           </tr>`).join("")}</tbody></table>`;
     }
 
+    // Outbound (PSP→SPI) sent/correlated counts per message type — surfaces trck.002.
+    function renderOutByType(s) {
+      const items = s.outboundByMsgType;
+      const el = $("outbytype");
+      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">Sem dados no período.</div>`; return; }
+      el.innerHTML = `<table>
+        <thead><tr><th>Tipo</th><th class="num">Total</th><th class="num">Correlacionadas</th></tr></thead>
+        <tbody>${items.map(t => {
+          const hi = t.msgType === "trck.002" ? ' style="font-weight:600"' : "";
+          return `<tr${hi}>
+            <td class="mono">${esc(t.msgType)}</td>
+            <td class="num">${fmt(t.total)}</td>
+            <td class="num">${fmt(t.correlated)}</td>
+          </tr>`;
+        }).join("")}</tbody></table>`;
+    }
+
+    // Replication timing: end-to-end (inbound) and A↔B correlation (outbound).
+    function renderLatency(s) {
+      const lat = s.latency;
+      const el = $("latency");
+      const rows = [
+        { lbl: "Ponta a ponta (entrada)", st: lat && lat.inboundEndToEnd },
+        { lbl: "Correlação A↔B (saída)", st: lat && lat.outboundCorrelation },
+      ];
+      const anySamples = rows.some(r => r.st && r.st.count > 0);
+      if (!anySamples) { el.innerHTML = `<div class="empty">Sem medições no período.</div>`; return; }
+      el.innerHTML = `<table>
+        <thead><tr><th>Etapa</th><th class="num">Amostras</th><th class="num">Média</th><th class="num">p50</th><th class="num">p95</th><th class="num">Máx</th></tr></thead>
+        <tbody>${rows.map(r => {
+          const st = r.st || { count: 0, avgMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 };
+          const empty = st.count === 0;
+          return `<tr>
+            <td>${esc(r.lbl)}</td>
+            <td class="num">${fmt(st.count)}</td>
+            <td class="num">${empty ? "—" : dur(st.avgMs)}</td>
+            <td class="num">${empty ? "—" : dur(st.p50Ms)}</td>
+            <td class="num">${empty ? "—" : dur(st.p95Ms)}</td>
+            <td class="num">${empty ? "—" : dur(st.maxMs)}</td>
+          </tr>`;
+        }).join("")}</tbody></table>`;
+    }
+
+    const dirLabel = (d) => d === "Inbound" ? "Entrada" : d === "Outbound" ? "Saída" : d;
+
     function renderErrors(s) {
       const items = s.recentErrors;
       const el = $("errors");
-      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">No errors in range. 🎉</div>`; return; }
+      if (!items || items.length === 0) { el.innerHTML = `<div class="empty">Sem erros no período. 🎉</div>`; return; }
       el.innerHTML = `<table>
-        <thead><tr><th>When (UTC)</th><th>Dir</th><th>System</th><th>Msg type</th><th>Idempotent id</th><th>Error</th></tr></thead>
+        <thead><tr><th>Quando (UTC)</th><th>Direção</th><th>Sistema</th><th>Tipo</th><th>Id idempotente</th><th>Erro</th></tr></thead>
         <tbody>${items.map(e => `
           <tr>
             <td class="mono">${esc(new Date(e.at).toISOString().replace("T", " ").slice(0, 19))}</td>
-            <td>${esc(e.direction)}</td>
+            <td>${esc(dirLabel(e.direction))}</td>
             <td><span class="badge ${e.system === "A" ? "a" : "b"}">${esc(sysName(e.system))}</span></td>
             <td class="mono">${esc(e.msgType)}</td>
             <td class="mono truncate">${esc(e.idempotentId)}</td>
@@ -270,7 +332,7 @@
       const status = $("status");
       const apiBase = getApiBase();
       status.className = "";
-      status.textContent = "refreshing…";
+      status.textContent = "atualizando…";
       const params = new URLSearchParams();
       const from = toUtcParam($("from").value);
       const to = toUtcParam($("to").value);
@@ -282,14 +344,16 @@
         const s = await res.json();
         renderTiles(s);
         renderFunnel(s);
-        renderLabelCounts("correlation", s.correlationSource, "var(--accent)");
+        renderLatency(s);
         renderByType(s);
+        renderOutByType(s);
+        renderLabelCounts("correlation", s.correlationSource, "var(--accent)");
         renderLabelCounts("discrepancies", s.discrepanciesByField, "var(--err)");
         renderErrors(s);
-        status.textContent = "updated " + new Date().toLocaleTimeString();
+        status.textContent = "atualizado às " + new Date().toLocaleTimeString(LOCALE);
       } catch (e) {
         status.className = "error";
-        status.textContent = `failed to load from ${apiBase}: ${e.message}`;
+        status.textContent = `falha ao carregar de ${apiBase}: ${e.message}`;
       }
     }
 
@@ -301,15 +365,15 @@
 
     // Reflect the configured names into all static (non-data) labels.
     function applyStaticLabels() {
-      $("replLabel").textContent = `${nameA()} → ${nameB()} replication`;
-      document.title = "Coexistence Analytics";
+      $("replLabel").textContent = `Replicação ${nameA()} → ${nameB()}`;
+      document.title = "Análise de Convivência";
     }
 
     // Wire settings inputs (API base URL + System A/B names).
     $("apiBase").value = getApiBase();
     $("nameA").value = nameA();
     $("nameB").value = nameB();
-    $("apiHint").textContent = `defaults: ${DEFAULT_API} · ${DEFAULT_NAME_A} · ${DEFAULT_NAME_B}`;
+    $("apiHint").textContent = `padrões: ${DEFAULT_API} · ${DEFAULT_NAME_A} · ${DEFAULT_NAME_B}`;
     function saveSettings() {
       const api = $("apiBase").value.trim().replace(/\/+$/, "");
       const a = $("nameA").value.trim();

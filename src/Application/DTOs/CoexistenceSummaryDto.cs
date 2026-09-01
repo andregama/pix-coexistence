@@ -14,6 +14,8 @@ public sealed record CoexistenceSummaryDto(
     ErrorStatsDto Errors,
     IReadOnlyList<LabelCountDto> CorrelationSource,
     IReadOnlyList<MsgTypeBreakdownDto> ByMsgType,
+    IReadOnlyList<OutboundMsgTypeBreakdownDto> OutboundByMsgType,
+    ReplicationLatencyDto Latency,
     IReadOnlyList<LabelCountDto> DiscrepanciesByField,
     IReadOnlyList<RecentErrorDto> RecentErrors);
 
@@ -44,6 +46,28 @@ public sealed record MsgTypeBreakdownDto(
     long ReceivedFromA,
     long PropagatedToB,
     long ConsumedByB);
+
+/// <summary>Outbound (PSP→SPI) sent/correlated counts per message type, incl. trck.002.</summary>
+public sealed record OutboundMsgTypeBreakdownDto(
+    string MsgType,
+    long Total,
+    long Correlated);   // MsgIdSystemA IS NOT NULL AND MsgIdSystemB IS NOT NULL
+
+/// <summary>Time taken through the replication flow (from stored timestamps).</summary>
+public sealed record ReplicationLatencyDto(
+    LatencyStatsDto InboundEndToEnd,      // SpiReceivedMsg: ConsumedAt − CreatedAt
+    LatencyStatsDto OutboundCorrelation); // SpiSentMsg (complete pair): UpdatedAt − CreatedAt
+
+/// <summary>Latency distribution in milliseconds; all zero when <see cref="Count"/> is 0.</summary>
+public sealed record LatencyStatsDto(
+    long Count,
+    double AvgMs,
+    double P50Ms,
+    double P95Ms,
+    double MaxMs)
+{
+    public static readonly LatencyStatsDto Empty = new(0, 0, 0, 0, 0);
+}
 
 public sealed record RecentErrorDto(
     string IdempotentId,

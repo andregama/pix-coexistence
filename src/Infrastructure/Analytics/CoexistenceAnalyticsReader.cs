@@ -111,6 +111,32 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             .OrderByDescending(x => x.Count)
             .ToList();
 
+        // Outbound (PSP→SPI) sent/correlated counts per message type — surfaces trck.002 and every
+        // other outbound request. Anonymous-type projection then client-side map/order (EF-translatable).
+        var outboundByTypeRaw = await sent
+            .GroupBy(x => x.MsgType)
+            .Select(g => new
+            {
+                MsgType = g.Key,
+                Total = g.LongCount(),
+                Correlated = g.Sum(x => x.MsgIdSystemA != null && x.MsgIdSystemB != null ? 1L : 0L),
+            })
+            .ToListAsync(cancellationToken);
+        var outboundByMsgType = outboundByTypeRaw
+            .Select(x => new OutboundMsgTypeBreakdownDto(x.MsgType, x.Total, x.Correlated))
+            .OrderByDescending(x => x.Total)
+            .ToList();
+
+        var latency = new ReplicationLatencyDto(
+            InboundEndToEnd: Summarize(await received
+                .Where(x => x.ConsumedAt != null)
+                .Select(x => EF.Functions.DateDiffMillisecond(x.CreatedAt, x.ConsumedAt!.Value))
+                .ToListAsync(cancellationToken)),
+            OutboundCorrelation: Summarize(await sent
+                .Where(x => x.UpdatedAt != null && x.MsgIdSystemA != null && x.MsgIdSystemB != null)
+                .Select(x => EF.Functions.DateDiffMillisecond(x.CreatedAt, x.UpdatedAt!.Value))
+                .ToListAsync(cancellationToken)));
+
         var recentErrors = await BuildRecentErrorsAsync(received, sent, cancellationToken);
 
         return new CoexistenceSummaryDto(
@@ -122,8 +148,33 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             Errors: errors,
             CorrelationSource: correlationSource,
             ByMsgType: byMsgType,
+            OutboundByMsgType: outboundByMsgType,
+            Latency: latency,
             DiscrepanciesByField: discrepanciesByField,
             RecentErrors: recentErrors);
+    }
+
+    /// <summary>Computes count/avg/p50/p95/max over a set of millisecond durations (negatives clamped to 0).</summary>
+    private static LatencyStatsDto Summarize(IReadOnlyList<int> durationsMs)
+    {
+        if (durationsMs.Count == 0)
+            return LatencyStatsDto.Empty;
+
+        var sorted = durationsMs.Select(d => (double)Math.Max(0, d)).OrderBy(d => d).ToArray();
+        return new LatencyStatsDto(
+            Count: sorted.Length,
+            AvgMs: sorted.Average(),
+            P50Ms: Percentile(sorted, 0.50),
+            P95Ms: Percentile(sorted, 0.95),
+            MaxMs: sorted[^1]);
+    }
+
+    // Nearest-rank percentile over a pre-sorted ascending array (index = ceil(p*n) − 1).
+    private static double Percentile(double[] sortedAsc, double p)
+    {
+        var rank = (int)Math.Ceiling(p * sortedAsc.Length);
+        var index = Math.Clamp(rank - 1, 0, sortedAsc.Length - 1);
+        return sortedAsc[index];
     }
 
     private static async Task<IReadOnlyList<RecentErrorDto>> BuildRecentErrorsAsync(
