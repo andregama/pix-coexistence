@@ -96,6 +96,64 @@ public sealed class InboundResponseTransformerTests
         result.Should().NotContain("MSG-A");
     }
 
+    private static string Trck002(string bizMsgIdr, string ispb, string endToEndId = "E2E-INTERNAL") => $"""
+        <Envelope>
+          <AppHdr>
+            <Fr><FIId><FinInstnId><Othr><Id>{ispb}</Id></Othr></FinInstnId></FIId></Fr>
+            <To><FIId><FinInstnId><Othr><Id>00038166</Id></Othr></FinInstnId></FIId></To>
+            <BizMsgIdr>{bizMsgIdr}</BizMsgIdr>
+          </AppHdr>
+          <Document><PmtStsTrckrRpt>
+            <GrpHdr><MsgId>{bizMsgIdr}</MsgId></GrpHdr>
+            <TrckrStsAndTx><Tx><PmtId><EndToEndId>{endToEndId}</EndToEndId></PmtId></Tx></TrckrStsAndTx>
+          </PmtStsTrckrRpt></Document>
+        </Envelope>
+        """;
+
+    private static string Camt025(string orgnlTrckMsgId, string endToEndId, string toIspb) => $"""
+        <Envelope>
+          <AppHdr>
+            <Fr><FIId><FinInstnId><Othr><Id>00038166</Id></Othr></FinInstnId></FIId></Fr>
+            <To><FIId><FinInstnId><Othr><Id>{toIspb}</Id></Othr></FinInstnId></FIId></To>
+          </AppHdr>
+          <Document><Rct><RctDtls>
+            <OrgnlMsgId><MsgId>{orgnlTrckMsgId}</MsgId></OrgnlMsgId>
+            <OrgnlPmtId><PrtryId>{endToEndId}</PrtryId></OrgnlPmtId>
+            <ReqHdlg><Sts><Cd>ACPT</Cd></Sts></ReqHdlg>
+          </RctDtls></Rct></Document>
+        </Envelope>
+        """;
+
+    [Fact]
+    public void Transform_Camt025_RewritesNestedOrgnlMsgId_And_AppHdrTo_ForSystemB()
+    {
+        var trckA = Trck002(bizMsgIdr: "TRCK-A", ispb: "11111111");
+        var trckB = Trck002(bizMsgIdr: "TRCK-B", ispb: "22222222");
+        var response = Camt025(orgnlTrckMsgId: "TRCK-A", endToEndId: "E2E-INTERNAL", toIspb: "11111111");
+
+        var result = _transformer.Transform(response, trckA, trckB);
+
+        // Nested OrgnlMsgId/MsgId back-link rewritten to B's trck.002 id.
+        result.Should().Contain("<MsgId>TRCK-B</MsgId>");
+        result.Should().NotContain("TRCK-A");
+        // AppHdr To rewritten to B's ISPB.
+        result.Should().Contain("<Id>22222222</Id>");
+        // OrgnlPmtId/PrtryId (shared EndToEndId) left untouched, status unchanged.
+        result.Should().Contain("<PrtryId>E2E-INTERNAL</PrtryId>");
+        result.Should().Contain("<Cd>ACPT</Cd>");
+    }
+
+    [Fact]
+    public void Transform_Camt025_Unchanged_WhenSystemsShareIspbAndTrckId()
+    {
+        var trck = Trck002(bizMsgIdr: "TRCK-SAME", ispb: "11111111");
+        var response = Camt025(orgnlTrckMsgId: "TRCK-SAME", endToEndId: "E2E-INTERNAL", toIspb: "11111111");
+
+        var result = _transformer.Transform(response, trck, trck);
+
+        result.Should().Be(response);
+    }
+
     [Fact]
     public void Transform_ReturnsUnchanged_WhenAAndBAreEqual()
     {

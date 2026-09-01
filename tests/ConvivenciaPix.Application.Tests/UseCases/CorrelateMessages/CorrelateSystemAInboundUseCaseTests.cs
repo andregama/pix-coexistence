@@ -102,6 +102,44 @@ public sealed class CorrelateSystemAInboundUseCaseTests
 
 
     [Fact]
+    public async Task ExecuteAsync_Camt025_CorrelatesToTrck002Pair_AndPublishes()
+    {
+        // The inbound response (camt.025) and the stored request pair (trck.002) have different
+        // MsgTypes; correlation is purely by the shared key, so the use case must handle the mismatch.
+        var allowed = new HashSet<string> { "camt.025" };
+        var trckPair = SpiSentMsg.Create("E2E-INTERNAL", "trck.002");
+        trckPair.UpdateFromSystemA("TRCK-A", "<trck-a/>", null);
+        trckPair.UpdateFromSystemB("TRCK-B", "<trck-b/>", null);
+
+        _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("camt.025");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "camt.025")).Returns("E2E-INTERNAL");
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("camt.025")).Returns("MessageKey");
+        _xmlParserMock.Setup(p => p.ExtractOriginalIdempotentId(It.IsAny<string>(), "camt.025")).Returns("TRCK-A");
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-INTERNAL", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-INTERNAL", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(trckPair);
+        _transformerMock.Setup(t => t.Transform("<pacs002/>", "<trck-a/>", "<trck-b/>"))
+            .Returns("<camt025-for-b/>");
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(CdcJson, allowed, CancellationToken.None);
+
+        _transformerMock.Verify(t => t.Transform("<pacs002/>", "<trck-a/>", "<trck-b/>"), Times.Once);
+        published.Should().NotBeNull();
+        var ready = JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!;
+        ready.IdempotentId.Should().Be("E2E-INTERNAL");
+        ready.MsgType.Should().Be("camt.025");
+        ready.TransformedXml.Should().Be("<camt025-for-b/>");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Throws_WhenSentMsgMissing()
     {
         _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))

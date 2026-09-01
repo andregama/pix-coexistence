@@ -397,6 +397,37 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
+    public void Trck002_CorrelatesOnInternalTransactionEndToEndId()
+    {
+        var xml = BuildSpiEnvelope("trck.002", "1.1", "PmtStsTrckrRpt",
+            "<GrpHdr><MsgId>M66666666-TRCK</MsgId></GrpHdr>" +
+            "<TrckrStsAndTx><Tx><PmtId><EndToEndId>E2E-INTERNAL-1</EndToEndId></PmtId>" +
+            "<IntrBkSttlmAmt Ccy=\"BRL\">78770.23</IntrBkSttlmAmt></Tx></TrckrStsAndTx>",
+            bizMsgIdr: "M66666666-TRCK");
+
+        _parser.ExtractMessageType(xml).Should().Be("trck.002");
+        _parser.ExtractIdempotentId(xml, "trck.002").Should().Be("E2E-INTERNAL-1");
+        _parser.ExtractCorrelationKey(xml, "trck.002").Should().Be("E2E-INTERNAL-1");
+        _parser.GetCorrelationSource("trck.002").Should().Be("MessageKey");
+        _parser.ExtractAmount(xml).Should().Be(78770.23m);
+    }
+
+    [Fact]
+    public void Camt025_CorrelatesOnReferencedTrck002EndToEndId()
+    {
+        // camt.025 (Rct) references the trck.002 it answers via OrgnlPmtId/PrtryId (the shared
+        // internal-transaction EndToEndId) — so it correlates to the same row as the trck.002 pair.
+        var xml = BuildSpiEnvelope("camt.025", "1.0", "Rct",
+            "<RctDtls>" +
+            "<OrgnlMsgId><MsgId>M66666666-TRCK</MsgId></OrgnlMsgId>" +
+            "<OrgnlPmtId><PrtryId>E2E-INTERNAL-1</PrtryId></OrgnlPmtId>" +
+            "</RctDtls>");
+
+        _parser.ExtractCorrelationKey(xml, "camt.025").Should().Be("E2E-INTERNAL-1");
+        _parser.GetCorrelationSource("camt.025").Should().Be("MessageKey");
+    }
+
+    [Fact]
     public void ExtractOriginalIdempotentId_Pain014_UsesOrgnlEndToEndId_NotZerosMsgId()
     {
         // pain.014's OrgnlMsgId is a zeros placeholder in the catalog; the real back-reference to the

@@ -16,6 +16,7 @@ public interface ISpiXmlParser
     /// pacs.008 → CdtTrfTxInf/PmtId/EndToEndId,
     /// pacs.002 → TxInfAndSts/OrgnlEndToEndId,
     /// pacs.004 → TxInf/RtrId,
+    /// trck.002 → Tx/PmtId/EndToEndId (internal-transaction id, shared across A and B),
     /// pibr.001 → EchoReq/GrpHdr/MsgId (SPI Echo has no EndToEndId).
     /// For the Pix Automático / cancellation families (pain.*, camt.*, admi.*, reda.*) the key is
     /// the AppHdr/GrpHdr &lt;MsgId&gt;. This is the value the proxy layer uses for de-duplication
@@ -34,6 +35,8 @@ public interface ISpiXmlParser
     /// shared across A and B for the whole authorization lifecycle).</item>
     /// <item>camt.055/camt.029 → the original payment's OrgnlEndToEndId (references the
     /// already-correlated pacs.008, so it is shared).</item>
+    /// <item>camt.025 → the answered trck.002's internal-transaction EndToEndId
+    /// (RctDtls/OrgnlPmtId/PrtryId), shared across A and B.</item>
     /// </list>
     /// </summary>
     string ExtractCorrelationKey(string xml, string msgType);

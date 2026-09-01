@@ -177,6 +177,12 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
                     "//*[local-name()='TxInf']/*[local-name()='RtrId']")
                 ?? throw new InvalidOperationException("pacs.004 XML missing TxInf/RtrId"),
 
+            // trck.002 (internal-transaction status tracker) — the shared key is the internal
+            // transaction's EndToEndId, aligned across System A and B (serves dedup + correlation).
+            "trck.002" => SelectText(doc, ns,
+                    "//*[local-name()='Tx']/*[local-name()='PmtId']/*[local-name()='EndToEndId']")
+                ?? throw new InvalidOperationException("trck.002 XML missing Tx/PmtId/EndToEndId"),
+
             // SPI Echo (pibr.001) has no EndToEndId; the message identity is GrpHdr/MsgId
             // (equal to AppHdr/BizMsgIdr).
             "pibr.001" => SelectText(doc, ns,
@@ -211,6 +217,18 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
             return SelectText(doc, ns, "//*[local-name()='OrgnlEndToEndId']")
                 ?? throw new InvalidOperationException(
                     $"{msgType} XML missing OrgnlEndToEndId; cannot derive correlation key");
+        }
+
+        if (msgType == "camt.025")
+        {
+            // camt.025 (Rct) is SPI/GRAF's receipt for a trck.002; it correlates to the trck.002 pair
+            // on the referenced internal-transaction EndToEndId (RctDtls/OrgnlPmtId/PrtryId), which is
+            // shared across A and B — analogous to pacs.002 correlating on OrgnlEndToEndId. This is the
+            // correlation key only; the camt.025's own idempotency key stays its header id.
+            var (doc, ns) = Load(xml);
+            return SelectText(doc, ns, "//*[local-name()='OrgnlPmtId']/*[local-name()='PrtryId']")
+                ?? throw new InvalidOperationException(
+                    "camt.025 XML missing RctDtls/OrgnlPmtId/PrtryId; cannot derive correlation key");
         }
 
         // All other types correlate on the shared message-level idempotency key.
