@@ -313,4 +313,97 @@ public sealed class SpiXmlParserTests
         var act = () => _parser.ExtractCorrelationKey(xml, "pain.012");
         act.Should().Throw<InvalidOperationException>().WithMessage("*recurrenceId*");
     }
+
+    // ---- Real Bacen SPI envelope shapes (catalog v5.13.1) ----
+    // SPI wraps the business message in <Envelope xmlns="https://www.bcb.gov.br/pi/<family>/<ver>">
+    // with <AppHdr> (BizMsgIdr + MsgDefIdr="<family>.spi.<ver>") and <Document> siblings.
+
+    private static string BuildSpiEnvelope(string family, string ver, string businessElement, string innerXml, string bizMsgIdr = "M0003816612345678901234567890123")
+        => $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Envelope xmlns="https://www.bcb.gov.br/pi/{family}/{ver}">
+              <AppHdr>
+                <Fr><FIId><FinInstnId><Othr><Id>00038166</Id></Othr></FinInstnId></FIId></Fr>
+                <To><FIId><FinInstnId><Othr><Id>99999010</Id></Othr></FinInstnId></FIId></To>
+                <BizMsgIdr>{bizMsgIdr}</BizMsgIdr>
+                <MsgDefIdr>{family}.spi.{ver}</MsgDefIdr>
+                <CreDt>2020-01-01T08:30:12.000Z</CreDt>
+                <Sgntr/>
+              </AppHdr>
+              <Document>
+                <{businessElement}>{innerXml}</{businessElement}>
+              </Document>
+            </Envelope>
+            """;
+
+    [Theory]
+    [InlineData("pacs.008", "1.16", "FIToFICstmrCdtTrf")]
+    [InlineData("pacs.002", "1.17", "FIToFIPmtStsRpt")]
+    [InlineData("pacs.004", "1.5", "PmtRtr")]
+    [InlineData("camt.055", "1.1", "CstmrPmtCxlReq")]
+    [InlineData("camt.029", "1.2", "RsltnOfInvstgtn")]
+    [InlineData("admi.002", "1.5", "MErr")]
+    public void ExtractMessageType_RealSpiEnvelope_FromMsgDefIdr(string family, string ver, string businessElement)
+    {
+        var xml = BuildSpiEnvelope(family, ver, businessElement, innerXml: "");
+        _parser.ExtractMessageType(xml).Should().Be(family);
+    }
+
+    [Fact]
+    public void ExtractMessageType_UnlistedCatalogFamily_IsIdentifiedFromMsgDefIdr()
+    {
+        // camt.060 / trck.002 are not payment-flow types but must still be identified, not throw.
+        _parser.ExtractMessageType(BuildSpiEnvelope("camt.060", "1.9", "AcctRptgReq", "")).Should().Be("camt.060");
+        _parser.ExtractMessageType(BuildSpiEnvelope("trck.002", "1.0", "PmtStsTrckrRpt", "")).Should().Be("trck.002");
+    }
+
+    [Fact]
+    public void ExtractMessageType_NoMsgDefIdr_FallsBackToMessageNamespace()
+    {
+        // Strip the AppHdr/MsgDefIdr entirely; identification must still succeed via the namespace URI.
+        var xml = """
+            <Envelope xmlns="https://www.bcb.gov.br/pi/pacs.002/1.17">
+              <Document><FIToFIPmtStsRpt/></Document>
+            </Envelope>
+            """;
+        _parser.ExtractMessageType(xml).Should().Be("pacs.002");
+    }
+
+    [Fact]
+    public void ExtractMessageId_SpiEnvelope_ReturnsBizMsgIdr()
+    {
+        // admi/camt.029/camt.055 have no GrpHdr/MsgId; the message id is AppHdr/BizMsgIdr.
+        var xml = BuildSpiEnvelope("camt.055", "1.1", "CstmrPmtCxlReq", "", bizMsgIdr: "BIZ-123");
+        _parser.ExtractMessageId(xml).Should().Be("BIZ-123");
+    }
+
+    [Fact]
+    public void ExtractAmount_Pacs004_UsesRtrdIntrBkSttlmAmt()
+    {
+        var xml = BuildSpiEnvelope("pacs.004", "1.5", "PmtRtr",
+            "<TxInf><RtrId>D1</RtrId><RtrdIntrBkSttlmAmt Ccy=\"BRL\">1234.56</RtrdIntrBkSttlmAmt></TxInf>");
+        _parser.ExtractAmount(xml).Should().Be(1234.56m);
+    }
+
+    [Fact]
+    public void ExtractCorrelationKey_Pain014_UsesOrgnlEndToEndId()
+    {
+        // pain.014 carries OrgnlEndToEndId (not a recurrence id); its correlation key references the
+        // original payment, shared across System A and B.
+        var xml = BuildSpiEnvelope("pain.014", "1.4", "CdtrPmtActvtnReqStsRpt",
+            "<OrgnlGrpInfAndSts><OrgnlEndToEndId>E2E-SHARED-014</OrgnlEndToEndId></OrgnlGrpInfAndSts>");
+        _parser.ExtractCorrelationKey(xml, "pain.014").Should().Be("E2E-SHARED-014");
+        _parser.GetCorrelationSource("pain.014").Should().Be("DerivedKey");
+    }
+
+    [Fact]
+    public void ExtractOriginalIdempotentId_Pain014_UsesOrgnlEndToEndId_NotZerosMsgId()
+    {
+        // pain.014's OrgnlMsgId is a zeros placeholder in the catalog; the real back-reference to the
+        // original pain.013 payment is OrgnlEndToEndId.
+        var xml = BuildSpiEnvelope("pain.014", "1.4", "CdtrPmtActvtnReqStsRpt",
+            "<OrgnlGrpInfAndSts><OrgnlMsgId>00000000000000000000000000000000</OrgnlMsgId>" +
+            "<OrgnlEndToEndId>E2E-ORIG-013</OrgnlEndToEndId></OrgnlGrpInfAndSts>");
+        _parser.ExtractOriginalIdempotentId(xml, "pain.014").Should().Be("E2E-ORIG-013");
+    }
 }

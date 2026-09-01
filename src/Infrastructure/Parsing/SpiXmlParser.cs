@@ -1,15 +1,31 @@
 using ConvivenciaPix.Application.Interfaces;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.XPath;
 
 namespace ConvivenciaPix.Infrastructure.Parsing;
 
 /// <summary>
-/// Parses ISO 20022 SPI messages (pacs.008, pacs.002, pacs.004) used by Bacen.
-/// XPath queries are namespace-aware; missing optional fields return safe defaults.
+/// Parses ISO 20022 / Bacen SPI messages. Message-type detection is catalog-driven (any
+/// "&lt;family&gt;.&lt;nnn&gt;" that appears in the AppHdr MsgDefIdr or the message namespace),
+/// so it recognises every family in the SPI catalog, not just a fixed allow-list.
+/// XPath queries are namespace-agnostic (local-name based); missing optional fields return safe defaults.
 /// </summary>
-public sealed class SpiXmlParser : ISpiXmlParser
+public sealed partial class SpiXmlParser : ISpiXmlParser
 {
+    // Matches an ISO/SPI message-family token "<4 letters>.<3 digits>" (e.g. "pacs.002"),
+    // as it appears in MsgDefIdr ("pacs.002.spi.1.17" / "pacs.002.001.10") or the message
+    // namespace URI ("https://www.bcb.gov.br/pi/pacs.002/1.17").
+    [GeneratedRegex(@"\b([a-z]{4}\.\d{3})\b", RegexOptions.CultureInvariant)]
+    private static partial Regex FamilyTokenRegex();
+
+    private static string? MatchFamilyToken(string? source)
+    {
+        if (string.IsNullOrEmpty(source)) return null;
+        var m = FamilyTokenRegex().Match(source);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
     private static readonly (string Prefix, string Uri)[] KnownNamespaces =
     [
         ("pacs008", "urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08"),
@@ -18,42 +34,42 @@ public sealed class SpiXmlParser : ISpiXmlParser
         ("head",    "urn:iso:std:iso:20022:tech:xsd:head.001.001.02"),
     ];
 
-    // All SPI message types this parser recognises, matched against AppHdr/MsgDefIdr by "<family>.<nn>"
-    // prefix. Order does not matter — the prefixes are mutually exclusive.
-    private static readonly string[] KnownMessageTypes =
-    [
-        "pacs.008", "pacs.002", "pacs.004", "pibr.001", "pibr.002",
-        "pain.009", "pain.011", "pain.012", "pain.013", "pain.014",
-        "camt.055", "camt.029", "camt.025", "camt.014",
-        "reda.041", "admi.002", "admi.004",
-    ];
-
-    // Types whose correlation key is derived from the recurrenceId (IdRec), because the orchestrator
-    // cannot align the message-level idempotency keys System A and System B mint independently.
+    // Types whose correlation key is derived from the mandate/recurrence id (Pix Automático
+    // authorization), because the orchestrator cannot align the message-level idempotency keys
+    // System A and System B mint independently. Per the SPI catalog these carry a mandate id
+    // (MndtId) rather than an OrgnlEndToEndId.
     // (pain.009/pain.013 are excluded: System A only receives them, so they carry Bacen-assigned keys
     // already shared across both systems.)
     private static readonly HashSet<string> RecurrenceDerivedKeyTypes =
-        new(StringComparer.OrdinalIgnoreCase) { "pain.011", "pain.012", "pain.014" };
+        new(StringComparer.OrdinalIgnoreCase) { "pain.011", "pain.012" };
 
     // Types whose correlation key is the original payment's OrgnlEndToEndId — shared because it
-    // references the already-correlated pacs.008.
+    // references the already-correlated pacs.008/pain.013. pain.014 (CdtrPmtActvtnReqStsRpt) belongs
+    // here: the SPI catalog example carries OrgnlEndToEndId, not a recurrence id.
     private static readonly HashSet<string> OriginalPaymentKeyTypes =
-        new(StringComparer.OrdinalIgnoreCase) { "camt.055", "camt.029" };
+        new(StringComparer.OrdinalIgnoreCase) { "camt.055", "camt.029", "pain.014" };
 
     public string ExtractMessageId(string xml)
     {
         var (doc, ns) = Load(xml);
+        // The SPI Business Application Header identifies the message via <BizMsgIdr>; the ISO head.001
+        // AppHdr uses <MsgId>. pacs/pain also repeat it as <GrpHdr><MsgId>, but admi/camt.029/camt.055
+        // have no GrpHdr/MsgId, so BizMsgIdr must be tried first.
         return SelectText(doc, ns,
-            "//head:AppHdr/head:MsgId",
+            "//*[local-name()='AppHdr']/*[local-name()='BizMsgIdr']",
+            "//*[local-name()='AppHdr']/*[local-name()='MsgId']",
+            "//*[local-name()='GrpHdr']/*[local-name()='MsgId']",
             "//*[local-name()='MsgId']")
-            ?? throw new InvalidOperationException("SPI XML missing <MsgId>");
+            ?? throw new InvalidOperationException("SPI XML missing message id (AppHdr/BizMsgIdr or GrpHdr/MsgId)");
     }
 
     public decimal ExtractAmount(string xml)
     {
         var (doc, ns) = Load(xml);
+        // pacs.008 → IntrBkSttlmAmt; pacs.004 (payment return) → RtrdIntrBkSttlmAmt; instructed amount fallback.
         var raw = SelectText(doc, ns,
             "//*[local-name()='IntrBkSttlmAmt']",
+            "//*[local-name()='RtrdIntrBkSttlmAmt']",
             "//*[local-name()='InstdAmt']")
             ?? "0";
 
@@ -99,32 +115,23 @@ public sealed class SpiXmlParser : ISpiXmlParser
     {
         var (doc, ns) = Load(xml);
 
-        // ISO 20022 business application header carries <MsgDefIdr> with the message type
-        var msgDefIdr = SelectText(doc, ns,
-            "//head:AppHdr/head:MsgDefIdr",
-            "//*[local-name()='MsgDefIdr']");
+        // 1. Preferred: the Business Application Header MsgDefIdr. SPI uses "<family>.<nnn>.spi.<v>"
+        //    (e.g. "pacs.002.spi.1.17"); ISO uses "<family>.<nnn>.001.<vv>". Both begin with the
+        //    "<family>.<nnn>" token, so a token match identifies every catalog family generically.
+        var fromMsgDefIdr = MatchFamilyToken(SelectText(doc, ns, "//*[local-name()='MsgDefIdr']"));
+        if (fromMsgDefIdr is not null)
+            return fromMsgDefIdr;
 
-        if (msgDefIdr is not null)
-        {
-            // The MsgDefIdr always starts with the "<family>.<number>" (e.g. "pain.012.001.08"),
-            // so a prefix match on the first eight chars uniquely identifies the type.
-            foreach (var type in KnownMessageTypes)
-                if (msgDefIdr.StartsWith(type, StringComparison.OrdinalIgnoreCase))
-                    return type;
-        }
+        // 2. Derive from the business message namespace URI. SPI wraps the message in an <Envelope>
+        //    whose (and whose <Document> child's) namespace is "https://www.bcb.gov.br/pi/<family>.<nnn>/<v>";
+        //    a bare ISO <Document> carries "urn:iso:std:iso:20022:tech:xsd:<family>.<nnn>.001.<vv>".
+        var businessNode = doc.SelectSingleNode("//*[local-name()='Document']/*", ns) ?? doc.DocumentElement;
+        var fromNamespace = MatchFamilyToken(businessNode?.NamespaceURI);
+        if (fromNamespace is not null)
+            return fromNamespace;
 
-        // Fallback: infer from the business message element name.
-        // Real Bacen XML wraps the business message in <Document>. For pacs.* the root is
-        // "Document" itself; for the SPI Echo (pibr) the root is "Envelope" and <Document> is a
-        // child, so in both cases we look at <Document>'s first business child.
-        var rootName = doc.DocumentElement?.LocalName;
-        var businessElement = rootName switch
-        {
-            "Document" => doc.DocumentElement?.FirstChild?.LocalName,
-            "Envelope" => doc.SelectSingleNode("//*[local-name()='Document']/*", ns)?.LocalName,
-            _ => rootName
-        };
-
+        // 3. Last resort: map the business message element's local name.
+        var businessElement = businessNode?.LocalName;
         return businessElement switch
         {
             "FIToFICstmrCdtTrf"       => "pacs.008",
@@ -148,7 +155,8 @@ public sealed class SpiXmlParser : ISpiXmlParser
             "MErr" or "MssgRjctn"     => "admi.002",
             "SysEvtNtfctn"            => "admi.004",
             _ => throw new InvalidOperationException(
-                $"Cannot determine message type from business element '{businessElement}' and no MsgDefIdr found.")
+                $"Cannot determine message type: no MsgDefIdr, no recognised message namespace, " +
+                $"and unknown business element '{businessElement}'.")
         };
     }
 
@@ -175,12 +183,11 @@ public sealed class SpiXmlParser : ISpiXmlParser
                     "//*[local-name()='EchoReq']/*[local-name()='GrpHdr']/*[local-name()='MsgId']")
                 ?? throw new InvalidOperationException("pibr.001 XML missing EchoReq/GrpHdr/MsgId"),
 
-            // Pix Automático / cancellation / administrative families: the message-level idempotency
-            // key is the header MsgId (AppHdr BizMsgIdr, falling back to GrpHdr/MsgId).
-            _ when KnownMessageTypes.Contains(msgType) => ExtractHeaderMsgId(doc, ns)
-                ?? throw new InvalidOperationException($"{msgType} XML missing AppHdr/GrpHdr MsgId"),
-
-            _ => throw new ArgumentException($"Unsupported msgType '{msgType}'", nameof(msgType))
+            // Every other family (Pix Automático / cancellation / administrative / reference data):
+            // the message-level idempotency key is the header id — AppHdr BizMsgIdr, falling back to
+            // GrpHdr/MsgId.
+            _ => ExtractHeaderMsgId(doc, ns)
+                ?? throw new InvalidOperationException($"{msgType} XML missing AppHdr/GrpHdr message id"),
         };
     }
 
@@ -223,9 +230,13 @@ public sealed class SpiXmlParser : ISpiXmlParser
             // Return of a payment: back-link to the original pacs.008 EndToEndId.
             "pacs.004" => SelectText(doc, ns, "//*[local-name()='TxInf']/*[local-name()='OrgnlEndToEndId']"),
 
+            // pain.014 (payment-activation status report) back-links to the original pain.013 payment
+            // via OrgnlEndToEndId — its OrgnlMsgId is a zeros placeholder in the SPI catalog.
+            "pain.014" => SelectText(doc, ns, "//*[local-name()='OrgnlEndToEndId']"),
+
             // Status reports / rejections carry the answered message's MsgId in OrgnlMsgId; the
             // Correlate Worker uses this to rewrite A's reference to B's before delivery.
-            "pain.012" or "pain.014" or "camt.025" or "camt.029" or "admi.002" => SelectText(doc, ns,
+            "pain.012" or "camt.025" or "camt.029" or "admi.002" => SelectText(doc, ns,
                 "//*[local-name()='OrgnlMsgId']",
                 "//*[local-name()='OrgnlMsgNmId']",
                 "//*[local-name()='RltdRef']/*[local-name()='Ref']"),
