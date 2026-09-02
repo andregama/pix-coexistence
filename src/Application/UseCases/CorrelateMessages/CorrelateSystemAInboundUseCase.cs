@@ -48,7 +48,11 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _logger = logger;
     }
 
-    public async Task ExecuteAsync(string rawCdcJson, IReadOnlySet<string> allowedTypes, CancellationToken ct)
+    public async Task ExecuteAsync(
+        string rawCdcJson,
+        IReadOnlySet<string> allowedTypes,
+        IReadOnlySet<string> primaryTypes,
+        CancellationToken ct)
     {
         var mapped = SystemAInboundMapper.Map(rawCdcJson);
         var msgType = _xmlParser.ExtractMessageType(mapped.XmlMsg);
@@ -82,6 +86,19 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             await _receivedMsgRepo.UpdateAsync(existing, ct);
         }
 
+        // Primary/unsolicited inbound initiations (e.g. a received pacs.008 Pix credit) answer no
+        // A/B outbound message, so there is no SpiSentMsg to correlate and nothing to rewrite. Pass
+        // them through to System B unchanged — the proxy worker signs and delivers them like any
+        // other System B inbound, so B also processes the incoming transaction.
+        if (primaryTypes.Contains(msgType))
+        {
+            await PublishReadyForSystemBAsync(idempotentId, msgType, mapped.XmlMsg, ct);
+            _logger.LogInformation(
+                "SystemA inbound primary message passed through to System B. IdempotentId={Id} MsgType={Type}",
+                idempotentId, msgType);
+            return;
+        }
+
         // Correlate against the stored pacs.008 A/B pair so the response can be rewritten to the
         // values System B expects. The row only becomes complete once both outbound sides land; the
         // inbound response can race ahead of System B's side, so retry with backoff before giving up.
@@ -90,10 +107,20 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
 
         var transformedXml = _transformer.Transform(mapped.XmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
 
+        await PublishReadyForSystemBAsync(idempotentId, msgType, transformedXml, ct);
+
+        _logger.LogInformation(
+            "SystemA inbound correlated and transformed for System B. IdempotentId={Id} MsgType={Type}",
+            idempotentId, msgType);
+    }
+
+    /// <summary>Publishes the ready-for-System-B event (signed + delivered by the proxy worker).</summary>
+    private Task PublishReadyForSystemBAsync(string idempotentId, string msgType, string xmlForSystemB, CancellationToken ct)
+    {
         var readyDto = new SystemBInboundReadyDto(
             IdempotentId: idempotentId,
             MsgType: msgType,
-            TransformedXml: transformedXml,
+            TransformedXml: xmlForSystemB,
             OccurredAt: DateTimeOffset.UtcNow);
 
         var envelope = new KafkaEnvelope(
@@ -103,11 +130,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             Timestamp: DateTimeOffset.UtcNow,
             CorrelationId: idempotentId);
 
-        await _publisher.PublishAsync(SystemBResponsesTopic, envelope, ct);
-
-        _logger.LogInformation(
-            "SystemA inbound correlated and transformed for System B. IdempotentId={Id} MsgType={Type}",
-            idempotentId, msgType);
+        return _publisher.PublishAsync(SystemBResponsesTopic, envelope, ct);
     }
 
     /// <summary>

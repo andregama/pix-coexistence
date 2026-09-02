@@ -19,6 +19,7 @@ public sealed class SystemACdcCorrelateConsumer : KafkaConsumerBase<string, stri
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IReadOnlySet<string> _allowedTypes;
+    private readonly IReadOnlySet<string> _primaryTypes;
     private readonly ILogger<SystemACdcCorrelateConsumer> _logger;
 
     public SystemACdcCorrelateConsumer(
@@ -32,6 +33,7 @@ public sealed class SystemACdcCorrelateConsumer : KafkaConsumerBase<string, stri
     {
         _scopeFactory = scopeFactory;
         _allowedTypes = options.Value.GetAllowedSet();
+        _primaryTypes = options.Value.GetPrimaryInboundSet();
         _logger = logger;
     }
 
@@ -51,7 +53,7 @@ public sealed class SystemACdcCorrelateConsumer : KafkaConsumerBase<string, stri
 
             case CdcSource.InboundTable:
                 await scope.ServiceProvider.GetRequiredService<ICorrelateSystemAInboundUseCase>()
-                    .ExecuteAsync(value, _allowedTypes, cancellationToken);
+                    .ExecuteAsync(value, _allowedTypes, _primaryTypes, cancellationToken);
                 break;
 
             default:
