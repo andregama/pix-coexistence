@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    Present only to stop NuGet from walking up to the ConvivenciaPix solution's
+    Directory.Packages.props. Central Package Management is disabled here, so the
+    orchestrator projects pin their own package versions via PackageReference.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

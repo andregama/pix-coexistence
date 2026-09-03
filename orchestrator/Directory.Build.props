@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    Standalone orchestrator code. This file stops MSBuild from walking up into the
+    ConvivenciaPix solution's Directory.Build.props / Directory.Packages.props, so this
+    directory builds independently and is not part of that solution.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>
