@@ -218,6 +218,37 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             .ToList();
     }
 
+    public async Task<PropagationTimeSeriesDto> GetPropagationTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
+    {
+        // Daily buckets: for messages received from System A each day, how many were propagated to B.
+        // DateDiffDay(epoch, CreatedAt) is the day index (translated server-side, like the latency queries).
+        var epoch = DateTime.UnixEpoch;
+        var received = FilterReceived(_db.SpiReceivedMsgs.AsNoTracking(), from, to)
+            .Where(x => x.XmlMsgSystemA != null);
+
+        var raw = await received
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                Received = g.LongCount(),
+                Propagated = g.Sum(x => x.XmlMsgSystemB != null ? 1L : 0L),
+            })
+            .ToListAsync(cancellationToken);
+
+        var points = raw
+            .OrderBy(r => r.DayIndex)
+            .Select(r => new PropagationPointDto(
+                Day: epoch.AddDays(r.DayIndex),
+                Received: r.Received,
+                Propagated: r.Propagated,
+                PropagatedPct: r.Received > 0 ? Math.Round(r.Propagated * 100.0 / r.Received, 1) : 0))
+            .ToList();
+
+        return new PropagationTimeSeriesDto(from, to, points);
+    }
+
     // pibr.002 (proxy-synthesised Echo reply) is excluded from all counts; date bounds apply to CreatedAt.
     private static IQueryable<SpiReceivedMsg> FilterReceived(IQueryable<SpiReceivedMsg> q, DateTime? from, DateTime? to)
     {

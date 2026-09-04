@@ -35,4 +35,19 @@ public sealed class AnalyticsController : ControllerBase
         var summary = await _reader.GetSummaryAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
         return Ok(summary);
     }
+
+    /// <summary>
+    /// Daily evolution of the propagation rate (propagated ÷ received) over the optional
+    /// <paramref name="from"/>/<paramref name="to"/> (UTC) window.
+    /// </summary>
+    [HttpGet("timeseries")]
+    [ProducesResponseType(typeof(PropagationTimeSeriesDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PropagationTimeSeriesDto>> GetTimeSeries(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var series = await _reader.GetPropagationTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
+        return Ok(series);
+    }
 }

@@ -166,6 +166,46 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         summary.Latency.InboundEndToEnd.MaxMs.Should().Be(3000);
     }
 
+    [Fact]
+    public async Task PropagationTimeSeries_ReturnsDailyPropagatedPct_Ordered()
+    {
+        var type = "ts-" + Guid.NewGuid().ToString("N")[..8];
+        var day1 = new DateTime(2026, 3, 17, 10, 0, 0, DateTimeKind.Utc);
+        var day2 = new DateTime(2026, 3, 18, 10, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Day 1: 2 received, 1 propagated -> 50%. Day 2: 2 received, 2 propagated -> 100%.
+            ctx.SpiReceivedMsgs.Add(FromA("d1a", type, xmlB: true, consumed: false, source: "MessageKey"));
+            ctx.SpiReceivedMsgs.Add(FromA("d1b", type, xmlB: false, consumed: false, source: "MessageKey"));
+            ctx.SpiReceivedMsgs.Add(FromA("d2a", type, xmlB: true, consumed: false, source: "MessageKey"));
+            ctx.SpiReceivedMsgs.Add(FromA("d2b", type, xmlB: true, consumed: false, source: "MessageKey"));
+            // A pibr.002 on day 1 that must be excluded from the totals.
+            var echo = SpiReceivedMsg.CreateFromSystemA("echo" + type, "pibr.002", null, "<a/>", null);
+            ctx.SpiReceivedMsgs.Add(echo);
+            await ctx.SaveChangesAsync();
+
+            foreach (var (key, day) in new[] { ("d1a", day1), ("d1b", day1), ("d2a", day2), ("d2b", day2), ("echo", day1) })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1}", day, key + type);
+        }
+
+        var series = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetPropagationTimeSeriesAsync(
+                from: new DateTime(2026, 3, 16, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2026, 3, 19, 0, 0, 0, DateTimeKind.Utc));
+
+        series.Points.Should().HaveCount(2);
+        series.Points[0].Day.Should().Be(new DateTime(2026, 3, 17));
+        series.Points[0].Received.Should().Be(2); // pibr.002 excluded
+        series.Points[0].Propagated.Should().Be(1);
+        series.Points[0].PropagatedPct.Should().Be(50);
+        series.Points[1].Day.Should().Be(new DateTime(2026, 3, 18));
+        series.Points[1].Received.Should().Be(2);
+        series.Points[1].Propagated.Should().Be(2);
+        series.Points[1].PropagatedPct.Should().Be(100);
+    }
+
     private static SpiSentMsg SentPair(string type, string key, bool correlated)
     {
         var msg = SpiSentMsg.Create(key + type, type);
