@@ -80,22 +80,13 @@ public sealed class PropagateResponseUseCase : IPropagateResponseUseCase
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repo = scope.ServiceProvider.GetRequiredService<ISpiReceivedMsgRepository>();
 
-        var existing = await repo.FindByIdempotentIdAsync(ready.IdempotentId, ct);
-        if (existing is not null)
-        {
-            existing.SetSystemBXml(signedXml);
-            existing.SetPiResourceId(piResourceId);
-            await repo.UpdateAsync(existing, ct);
-            return existing;
-        }
-
-        // Defensive: the correlate worker normally writes the System A side before publishing the
-        // ready event, so the row usually exists. Create it here only if that ordering was missed.
-        var created = SpiReceivedMsg.CreateFromSystemB(
+        // Atomic per-side upsert: the correlate worker (System A) and this propagation (System B) can
+        // write the same row concurrently. Update only the B columns when the row exists, else insert.
+        var msg = SpiReceivedMsg.CreateFromSystemB(
             ready.IdempotentId, ready.MsgType, msgId: null, signedXml, errorCode: null);
-        created.SetPiResourceId(piResourceId);
-        await repo.AddAsync(created, ct);
-        return created;
+        msg.SetPiResourceId(piResourceId);
+        var (row, _) = await repo.UpsertSystemBAsync(msg, ct);
+        return row;
     }
 
     private async Task PublishEventsAsync(SpiReceivedMsg msg, CancellationToken ct)

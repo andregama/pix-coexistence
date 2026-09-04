@@ -44,44 +44,36 @@ public sealed class CorrelateSystemAOutboundUseCaseTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenRowAbsent_CreatesRow_AndDoesNotPublish()
+    public async Task ExecuteAsync_WhenInserted_RecordsMetric_AndDoesNotPublish()
     {
-        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SpiSentMsg?)null);
-
-        SpiSentMsg? added = null;
-        _sentRepoMock.Setup(r => r.AddAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
-            .Callback<SpiSentMsg, CancellationToken>((m, _) => added = m)
-            .Returns(Task.CompletedTask);
+        SpiSentMsg? passed = null;
+        _sentRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiSentMsg, CancellationToken>((m, _) => passed = m)
+            .ReturnsAsync((SpiSentMsg m, CancellationToken _) => new UpsertOutcome<SpiSentMsg>(m, Inserted: true));
 
         await _sut.ExecuteAsync(CdcJson, AllowedTypes, CancellationToken.None);
 
-        _sentRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Once);
-        _sentRepoMock.Verify(r => r.UpdateAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        added.Should().NotBeNull();
-        added!.XmlMsgSystemA.Should().Be("<pacs008-a/>");
-        added.XmlMsgSystemB.Should().BeNull();
-        added.IsComplete.Should().BeFalse();
-
+        passed.Should().NotBeNull();
+        passed!.XmlMsgSystemA.Should().Be("<pacs008-a/>");
+        passed.XmlMsgSystemB.Should().BeNull();
+        passed.IsComplete.Should().BeFalse();
+        _metricsMock.Verify(m => m.RecordCorrelationSource("MessageKey"), Times.Once); // once per row, on insert
         _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenCounterpartPresent_UpdatesRow_AndPublishesOnComplete()
+    public async Task ExecuteAsync_WhenUpdateCompletesRow_PublishesOnce_AndNoMetric()
     {
-        var existing = SpiSentMsg.Create("E2E-1", "pacs.008");
-        existing.UpdateFromSystemB("MSG-B", "<pacs008-b/>", null);
-        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existing);
+        var complete = SpiSentMsg.Create("E2E-1", "pacs.008");
+        complete.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null);
+        complete.UpdateFromSystemB("MSG-B", "<pacs008-b/>", null);
+        _sentRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpsertOutcome<SpiSentMsg>(complete, Inserted: false));
 
         await _sut.ExecuteAsync(CdcJson, AllowedTypes, CancellationToken.None);
 
-        _sentRepoMock.Verify(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
-        _sentRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
-        existing.IsComplete.Should().BeTrue();
-
+        _metricsMock.Verify(m => m.RecordCorrelationSource(It.IsAny<string>()), Times.Never); // not on update
         _publisherMock.Verify(p => p.PublishAsync("spi.correlation.events", It.IsAny<KafkaEnvelope>(),
             It.IsAny<CancellationToken>()), Times.Once);
         _publisherMock.Verify(p => p.PublishAsync("spi.comparison.events", It.IsAny<KafkaEnvelope>(),
@@ -95,7 +87,6 @@ public sealed class CorrelateSystemAOutboundUseCaseTests
 
         await _sut.ExecuteAsync(CdcJson, AllowedTypes, CancellationToken.None);
 
-        _sentRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
-        _sentRepoMock.Verify(r => r.UpdateAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
+        _sentRepoMock.Verify(r => r.UpsertSystemAAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

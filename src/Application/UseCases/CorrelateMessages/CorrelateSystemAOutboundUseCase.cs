@@ -52,33 +52,25 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
         var originalId = _xmlParser.ExtractOriginalIdempotentId(mapped.XmlMsg, msgType);
         var correlationSource = _xmlParser.GetCorrelationSource(msgType);
 
-        // First-arrival create-if-missing: whichever of System A/B outbound arrives first creates
-        // the shared row (keyed by IdempotentId); the second side updates it. Mirrors the
-        // SpiReceivedMsg "first arrival creates the row" pattern.
-        var msg = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
-        var isNew = msg is null;
-        if (msg is null)
-            msg = SpiSentMsg.Create(idempotentId, msgType);
-
+        // Atomic first-arrival upsert: whichever of System A/B outbound arrives first creates the
+        // shared row (keyed by IdempotentId); the other side updates only its own columns. Safe under
+        // the concurrent A/B race (no duplicate-key, no lost update).
+        var msg = SpiSentMsg.Create(idempotentId, msgType);
         msg.UpdateFromSystemA(mapped.MessageId, mapped.XmlMsg, mapped.Problem);
         msg.SetCorrelationSource(correlationSource);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 
-        if (isNew)
-        {
+        var (row, inserted) = await _sentMsgRepo.UpsertSystemAAsync(msg, ct);
+        if (inserted)
             _metrics.RecordCorrelationSource(correlationSource);
-            await _sentMsgRepo.AddAsync(msg, ct);
-        }
-        else
-            await _sentMsgRepo.UpdateAsync(msg, ct);
 
         _logger.LogInformation(
             "SystemA outbound correlated. IdempotentId={Id} MsgType={Type} Created={Created}",
-            idempotentId, msgType, isNew);
+            idempotentId, msgType, inserted);
 
-        if (msg.IsComplete)
-            await PublishEventsAsync(msg, ct);
+        if (row.IsComplete)
+            await PublishEventsAsync(row, ct);
     }
 
     private async Task PublishEventsAsync(SpiSentMsg msg, CancellationToken ct)

@@ -66,21 +66,14 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         try { msgId = _xmlParser.ExtractMessageId(mapped.XmlMsg); }
         catch { /* non-critical */ }
 
-        var existing = await _receivedMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
-        if (existing is null)
-        {
-            var created = SpiReceivedMsg.CreateFromSystemA(
-                idempotentId, msgType, msgId, mapped.XmlMsg, mapped.Problem, originalId);
-            created.SetCorrelationSource(correlationSource);
+        // Atomic per-side upsert: System A's CDC arrival and System B's propagation write the same
+        // row concurrently, so create-or-update the A columns without racing on the insert.
+        var receivedA = SpiReceivedMsg.CreateFromSystemA(
+            idempotentId, msgType, msgId, mapped.XmlMsg, mapped.Problem, originalId);
+        receivedA.SetCorrelationSource(correlationSource);
+        var (_, insertedReceived) = await _receivedMsgRepo.UpsertSystemAAsync(receivedA, ct);
+        if (insertedReceived)
             _metrics.RecordCorrelationSource(correlationSource);
-            await _receivedMsgRepo.AddAsync(created, ct);
-        }
-        else
-        {
-            existing.SetMsgIdIfAbsent(msgId);
-            existing.UpdateFromSystemA(mapped.XmlMsg, mapped.Problem);
-            await _receivedMsgRepo.UpdateAsync(existing, ct);
-        }
 
         // Primary/unsolicited inbound initiations (e.g. a received pacs.008 Pix credit) answer no
         // A/B outbound message, so there is no SpiSentMsg to correlate and nothing to rewrite. Pass

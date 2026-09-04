@@ -78,5 +78,48 @@ public sealed class SpiReceivedMsgRepositoryTests : IClassFixture<SqlServerFixtu
         marked.Should().Be(0);
     }
 
+    [Fact]
+    public async Task UpsertSystemA_InsertsWhenMissing_ThenSystemB_UpdatesAndPreservesA_NotConsumedAt()
+    {
+        var id = Uid();
+
+        var a = SpiReceivedMsg.CreateFromSystemA(id, "pacs.002", "MSG-" + id, "<a/>", null);
+        a.SetCorrelationSource("MessageKey");
+        (await CreateRepo().UpsertSystemAAsync(a)).Inserted.Should().BeTrue();
+
+        var b = SpiReceivedMsg.CreateFromSystemB(id, "pacs.002", msgId: "OTHER", "<b/>", null);
+        b.SetPiResourceId("rid-" + id);
+        (await CreateRepo().UpsertSystemBAsync(b)).Inserted.Should().BeFalse();
+
+        var row = await CreateRepo().FindByIdempotentIdAsync(id);
+        row!.XmlMsgSystemA.Should().Be("<a/>");
+        row.XmlMsgSystemB.Should().Be("<b/>");
+        row.MsgId.Should().Be("MSG-" + id);        // first-wins (A's MsgId, not B's "OTHER")
+        row.PiResourceId.Should().Be("rid-" + id);
+        row.ConsumedAt.Should().BeNull();          // never touched by the upsert
+        row.IsComplete.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Upsert_ConcurrentAAndB_ProduceOneCompleteRow_WithoutDuplicateKey()
+    {
+        var id = Uid();
+        var a = SpiReceivedMsg.CreateFromSystemA(id, "pacs.002", "MSG-" + id, "<a/>", null);
+        a.SetCorrelationSource("MessageKey");
+        var b = SpiReceivedMsg.CreateFromSystemB(id, "pacs.002", msgId: null, "<b/>", null);
+        b.SetPiResourceId("rid-" + id);
+
+        var act = () => Task.WhenAll(
+            CreateRepo().UpsertSystemAAsync(a),
+            CreateRepo().UpsertSystemBAsync(b));
+        await act.Should().NotThrowAsync();
+
+        var row = await CreateRepo().FindByIdempotentIdAsync(id);
+        row.Should().NotBeNull();
+        row!.XmlMsgSystemA.Should().Be("<a/>");
+        row.XmlMsgSystemB.Should().Be("<b/>");
+        row.IsComplete.Should().BeTrue();
+    }
+
     private static string Uid() => Guid.NewGuid().ToString("N")[..16];
 }

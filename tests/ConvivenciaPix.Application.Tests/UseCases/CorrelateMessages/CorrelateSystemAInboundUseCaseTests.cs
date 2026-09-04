@@ -99,7 +99,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
 
         await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
 
-        _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
+        _receivedRepoMock.Verify(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         _transformerMock.Verify(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"), Times.Once);
         published.Should().NotBeNull();
 
@@ -174,7 +174,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
 
         await _sut.ExecuteAsync(cdc, Types(allowed: allowed, primary: primary), CancellationToken.None);
 
-        _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
+        _receivedRepoMock.Verify(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         // No SpiSentMsg correlation and no transform for a primary message.
         _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);

@@ -48,12 +48,16 @@ public sealed class PropagateResponseUseCaseTests
             NullLogger<PropagateResponseUseCase>.Instance);
     }
 
+    // The B-side upsert returns the passed (not-yet-complete) entity, unless a test overrides it.
+    private void SetupUpsertReturnsPassed() =>
+        _receivedRepoMock.Setup(r => r.UpsertSystemBAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg m, CancellationToken _) => new UpsertOutcome<SpiReceivedMsg>(m, Inserted: true));
+
     [Fact]
     public async Task ExecuteAsync_SignsAndEnqueuesTransformedXml()
     {
         SetupCert("<signed/>");
-        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E123456789", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SpiReceivedMsg?)null);
+        SetupUpsertReturnsPassed();
 
         await _sut.ExecuteAsync(Ready, CancellationToken.None);
 
@@ -67,9 +71,11 @@ public sealed class PropagateResponseUseCaseTests
     {
         SetupCert("<signed/>");
 
-        var existing = SpiReceivedMsg.CreateFromSystemA("E123456789", "pacs.002", null, "<xmlA/>", null);
-        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E123456789", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existing);
+        // The upsert returns the merged, complete row (A already present + B just written).
+        var complete = SpiReceivedMsg.CreateFromSystemA("E123456789", "pacs.002", null, "<xmlA/>", null);
+        complete.SetSystemBXml("<signed/>");
+        _receivedRepoMock.Setup(r => r.UpsertSystemBAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpsertOutcome<SpiReceivedMsg>(complete, Inserted: false));
 
         await _sut.ExecuteAsync(Ready, CancellationToken.None);
 
@@ -82,8 +88,7 @@ public sealed class PropagateResponseUseCaseTests
     public async Task ExecuteAsync_WhenNotComplete_DoesNotPublishComparisonEvent()
     {
         SetupCert("<signed/>");
-        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E123456789", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SpiReceivedMsg?)null);
+        SetupUpsertReturnsPassed(); // returns a B-only row → not complete
 
         await _sut.ExecuteAsync(Ready, CancellationToken.None);
 
