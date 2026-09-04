@@ -14,6 +14,10 @@ public sealed class SpiSentMsgRepository : ISpiSentMsgRepository
         _db.SpiSentMsgs.AsNoTracking()
             .FirstOrDefaultAsync(x => x.IdempotentId == idempotentId, cancellationToken);
 
+    public Task<SpiSentMsg?> FindByMsgIdSystemAAsync(string msgIdSystemA, CancellationToken cancellationToken = default) =>
+        _db.SpiSentMsgs.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.MsgIdSystemA == msgIdSystemA, cancellationToken);
+
     public async Task AddAsync(SpiSentMsg msg, CancellationToken cancellationToken = default)
     {
         _db.SpiSentMsgs.Add(msg);

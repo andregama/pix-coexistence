@@ -19,9 +19,18 @@ public sealed class CorrelationOptions
     // stay on the correlate+transform path because they reference an A-outbound message.
     public string PrimaryInboundMessageTypes { get; set; } = "pacs.008,pain.009,pain.013";
 
+    // Inbound message-level responses that reference the original message by its MsgId (not by a
+    // transaction/correlation key), so they are correlated via a SpiSentMsg.MsgIdSystemA lookup:
+    //   admi.002 — message rejection, referencing the rejected message via RltdRef/Ref.
+    // When the referenced MsgId is not found in SpiSentMsg the message is still replicated to
+    // System B (unchanged) with a warning, rather than dead-lettered.
+    public string CorrelateByOriginalMsgIdMessageTypes { get; set; } = "admi.002";
+
     public IReadOnlySet<string> GetAllowedSet() => ToSet(AllowedMessageTypes);
 
     public IReadOnlySet<string> GetPrimaryInboundSet() => ToSet(PrimaryInboundMessageTypes);
+
+    public IReadOnlySet<string> GetCorrelateByOriginalMsgIdSet() => ToSet(CorrelateByOriginalMsgIdMessageTypes);
 
     private static IReadOnlySet<string> ToSet(string csv) =>
         csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

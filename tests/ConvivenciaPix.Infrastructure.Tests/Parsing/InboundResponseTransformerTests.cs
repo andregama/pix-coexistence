@@ -155,6 +155,21 @@ public sealed class InboundResponseTransformerTests
     }
 
     [Fact]
+    public void Transform_Admi002_RewritesRelatedRef_FromAToB()
+    {
+        // admi.002 references the rejected message via RltdRef/Ref = its MsgId. The correlated "sent"
+        // pair is the original message; rewrite the reference from A's MsgId to B's.
+        var originalA = "<Envelope><AppHdr><BizMsgIdr>MSG-A</BizMsgIdr></AppHdr><Document><FIToFICstmrCdtTrf/></Document></Envelope>";
+        var originalB = "<Envelope><AppHdr><BizMsgIdr>MSG-B</BizMsgIdr></AppHdr><Document><FIToFICstmrCdtTrf/></Document></Envelope>";
+        var admi002 = "<Envelope><Document><admi.002.001.01><RltdRef><Ref>MSG-A</Ref></RltdRef></admi.002.001.01></Document></Envelope>";
+
+        var result = _transformer.Transform(admi002, originalA, originalB);
+
+        result.Should().Contain("<Ref>MSG-B</Ref>");
+        result.Should().NotContain("MSG-A");
+    }
+
+    [Fact]
     public void Transform_ReturnsUnchanged_WhenAAndBAreEqual()
     {
         var sent = Pacs008("E2E-SAME", "DICT");

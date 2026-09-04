@@ -67,6 +67,16 @@ public sealed class ResponseTransformOptions
             SentValueXPath = "//*[local-name()='Case']/*[local-name()='Id']",
             ResponseTargetXPath = "//*[local-name()='Case']/*[local-name()='Id']"
         },
+        // admi.002 (message rejection) references the rejected message via RltdRef/Ref = its MsgId.
+        // Correlated by MsgIdSystemA, so the "sent" pair is the original message; rewrite the reference
+        // from A's MsgId (BizMsgIdr / GrpHdr/MsgId) to B's so System B recognises the rejection. Fires
+        // only when RltdRef/Ref is present (i.e. on admi.002) and the two sides' MsgIds differ.
+        new ResponseTransformRule
+        {
+            Name = "RelatedRef",
+            SentValueXPath = "//*[local-name()='AppHdr']/*[local-name()='BizMsgIdr'] | //*[local-name()='GrpHdr']/*[local-name()='MsgId']",
+            ResponseTargetXPath = "//*[local-name()='RltdRef']/*[local-name()='Ref']"
+        },
     ];
 }
 

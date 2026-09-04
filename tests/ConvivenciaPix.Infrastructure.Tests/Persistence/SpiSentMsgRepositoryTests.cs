@@ -38,6 +38,28 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
     }
 
     [Fact]
+    public async Task FindByMsgIdSystemA_ReturnsRow_WhenMatchingMsgIdExists()
+    {
+        var idempotentId = Uid();
+        var msgIdA = "MSGA-" + idempotentId;
+        var msg = SpiSentMsg.Create(idempotentId, "pacs.008");
+        msg.UpdateFromSystemA(msgIdA, "<xmlA/>", null);
+        await CreateRepo().AddAsync(msg);
+
+        var found = await CreateRepo().FindByMsgIdSystemAAsync(msgIdA);
+
+        found.Should().NotBeNull();
+        found!.IdempotentId.Should().Be(idempotentId);
+        found.MsgIdSystemA.Should().Be(msgIdA);
+    }
+
+    [Fact]
+    public async Task FindByMsgIdSystemA_UnknownMsgId_ReturnsNull()
+    {
+        (await CreateRepo().FindByMsgIdSystemAAsync("MSGA-" + Uid())).Should().BeNull();
+    }
+
+    [Fact]
     public async Task UpdateAsync_PersistsChanges()
     {
         var idempotentId = Uid();

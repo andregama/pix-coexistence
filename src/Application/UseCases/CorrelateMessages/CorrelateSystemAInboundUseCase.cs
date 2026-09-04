@@ -52,6 +52,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         string rawCdcJson,
         IReadOnlySet<string> allowedTypes,
         IReadOnlySet<string> primaryTypes,
+        IReadOnlySet<string> correlateByOriginalMsgIdTypes,
         CancellationToken ct)
     {
         var mapped = SystemAInboundMapper.Map(rawCdcJson);
@@ -96,6 +97,37 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             _logger.LogInformation(
                 "SystemA inbound primary message passed through to System B. IdempotentId={Id} MsgType={Type}",
                 idempotentId, msgType);
+            return;
+        }
+
+        // Message-level responses (e.g. admi.002 rejections) reference the original message by its
+        // MsgId, not by a transaction/correlation key. Correlate via SpiSentMsg.MsgIdSystemA and, when
+        // found, rewrite the reference to System B's MsgId. If the MsgId is not found (or the pair is
+        // incomplete), still replicate the message to System B unchanged and warn — never DLQ.
+        if (correlateByOriginalMsgIdTypes.Contains(msgType))
+        {
+            var byMsgId = string.IsNullOrEmpty(originalId)
+                ? null
+                : await _sentMsgRepo.FindByMsgIdSystemAAsync(originalId, ct);
+
+            string xmlForSystemB;
+            if (byMsgId is not null && byMsgId.IsComplete)
+            {
+                xmlForSystemB = _transformer.Transform(mapped.XmlMsg, byMsgId.XmlMsgSystemA!, byMsgId.XmlMsgSystemB!);
+                _logger.LogInformation(
+                    "SystemA inbound {Type} correlated by original MsgId={OrigMsgId} and transformed for System B. IdempotentId={Id}",
+                    msgType, originalId, idempotentId);
+            }
+            else
+            {
+                xmlForSystemB = mapped.XmlMsg;
+                _logger.LogWarning(
+                    "SystemA inbound {Type}: original MsgId={OrigMsgId} not found or incomplete in SpiSentMsg; " +
+                    "replicating to System B without correlation. IdempotentId={Id}",
+                    msgType, originalId, idempotentId);
+            }
+
+            await PublishReadyForSystemBAsync(idempotentId, msgType, xmlForSystemB, ct);
             return;
         }
 
