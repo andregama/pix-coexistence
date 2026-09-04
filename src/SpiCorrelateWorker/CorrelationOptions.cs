@@ -26,11 +26,20 @@ public sealed class CorrelationOptions
     // System B (unchanged) with a warning, rather than dead-lettered.
     public string CorrelateByOriginalMsgIdMessageTypes { get; set; } = "admi.002";
 
+    // Inbound responses that reference the original transfer by its OrgnlEndToEndId, correlated via
+    // a SpiSentMsg.IdempotentId lookup on that value:
+    //   pacs.004 — payment return, referencing the returned payment via TxInf/OrgnlEndToEndId.
+    // Returns can arrive up to 90 days later while SpiSentMsg has a 30-day TTL, so when the original
+    // is not found the pacs.004 is still replicated to System B (unchanged) with a warning, not DLQ'd.
+    public string CorrelateByOriginalEndToEndIdMessageTypes { get; set; } = "pacs.004";
+
     public IReadOnlySet<string> GetAllowedSet() => ToSet(AllowedMessageTypes);
 
     public IReadOnlySet<string> GetPrimaryInboundSet() => ToSet(PrimaryInboundMessageTypes);
 
     public IReadOnlySet<string> GetCorrelateByOriginalMsgIdSet() => ToSet(CorrelateByOriginalMsgIdMessageTypes);
+
+    public IReadOnlySet<string> GetCorrelateByOriginalEndToEndIdSet() => ToSet(CorrelateByOriginalEndToEndIdMessageTypes);
 
     private static IReadOnlySet<string> ToSet(string csv) =>
         csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

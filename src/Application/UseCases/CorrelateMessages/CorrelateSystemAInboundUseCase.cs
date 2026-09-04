@@ -53,6 +53,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         IReadOnlySet<string> allowedTypes,
         IReadOnlySet<string> primaryTypes,
         IReadOnlySet<string> correlateByOriginalMsgIdTypes,
+        IReadOnlySet<string> correlateByOriginalEndToEndIdTypes,
         CancellationToken ct)
     {
         var mapped = SystemAInboundMapper.Map(rawCdcJson);
@@ -101,33 +102,28 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         }
 
         // Message-level responses (e.g. admi.002 rejections) reference the original message by its
-        // MsgId, not by a transaction/correlation key. Correlate via SpiSentMsg.MsgIdSystemA and, when
-        // found, rewrite the reference to System B's MsgId. If the MsgId is not found (or the pair is
-        // incomplete), still replicate the message to System B unchanged and warn — never DLQ.
+        // MsgId, not by a transaction/correlation key. Correlate via SpiSentMsg.MsgIdSystemA; when
+        // not found the message is still replicated to System B (unchanged) with a warning, not DLQ'd.
         if (correlateByOriginalMsgIdTypes.Contains(msgType))
         {
             var byMsgId = string.IsNullOrEmpty(originalId)
                 ? null
                 : await _sentMsgRepo.FindByMsgIdSystemAAsync(originalId, ct);
+            await PublishCorrelatedOrReplicateAsync(idempotentId, msgType, mapped.XmlMsg, originalId, byMsgId, ct);
+            return;
+        }
 
-            string xmlForSystemB;
-            if (byMsgId is not null && byMsgId.IsComplete)
-            {
-                xmlForSystemB = _transformer.Transform(mapped.XmlMsg, byMsgId.XmlMsgSystemA!, byMsgId.XmlMsgSystemB!);
-                _logger.LogInformation(
-                    "SystemA inbound {Type} correlated by original MsgId={OrigMsgId} and transformed for System B. IdempotentId={Id}",
-                    msgType, originalId, idempotentId);
-            }
-            else
-            {
-                xmlForSystemB = mapped.XmlMsg;
-                _logger.LogWarning(
-                    "SystemA inbound {Type}: original MsgId={OrigMsgId} not found or incomplete in SpiSentMsg; " +
-                    "replicating to System B without correlation. IdempotentId={Id}",
-                    msgType, originalId, idempotentId);
-            }
-
-            await PublishReadyForSystemBAsync(idempotentId, msgType, xmlForSystemB, ct);
+        // Responses that reference the original transfer by OrgnlEndToEndId (e.g. pacs.004 returns).
+        // Correlate to the original transfer via SpiSentMsg.IdempotentId. Returns can arrive up to
+        // 90 days later while SpiSentMsg has a 30-day TTL, so when the original is gone the pacs.004 is
+        // still replicated to System B (unchanged) with a warning, not DLQ'd. Note: idempotentId is the
+        // return's own id (RtrId), so multiple returns for one original each get their own row.
+        if (correlateByOriginalEndToEndIdTypes.Contains(msgType))
+        {
+            var byOriginal = string.IsNullOrEmpty(originalId)
+                ? null
+                : await _sentMsgRepo.FindByIdempotentIdAsync(originalId, ct);
+            await PublishCorrelatedOrReplicateAsync(idempotentId, msgType, mapped.XmlMsg, originalId, byOriginal, ct);
             return;
         }
 
@@ -144,6 +140,34 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _logger.LogInformation(
             "SystemA inbound correlated and transformed for System B. IdempotentId={Id} MsgType={Type}",
             idempotentId, msgType);
+    }
+
+    /// <summary>
+    /// Resilient correlation for responses that reference an original message/transfer: when the
+    /// original (<paramref name="sent"/>) is found and complete, transform the message for System B;
+    /// otherwise replicate it unchanged and warn. Never dead-letters.
+    /// </summary>
+    private async Task PublishCorrelatedOrReplicateAsync(
+        string idempotentId, string msgType, string xmlMsg, string? originalRef, SpiSentMsg? sent, CancellationToken ct)
+    {
+        string xmlForSystemB;
+        if (sent is not null && sent.IsComplete)
+        {
+            xmlForSystemB = _transformer.Transform(xmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
+            _logger.LogInformation(
+                "SystemA inbound {Type} correlated to original ref={OrigRef} and transformed for System B. IdempotentId={Id}",
+                msgType, originalRef, idempotentId);
+        }
+        else
+        {
+            xmlForSystemB = xmlMsg;
+            _logger.LogWarning(
+                "SystemA inbound {Type}: original ref={OrigRef} not found or incomplete in SpiSentMsg; " +
+                "replicating to System B without correlation. IdempotentId={Id}",
+                msgType, originalRef, idempotentId);
+        }
+
+        await PublishReadyForSystemBAsync(idempotentId, msgType, xmlForSystemB, ct);
     }
 
     /// <summary>Publishes the ready-for-System-B event (signed + delivered by the proxy worker).</summary>

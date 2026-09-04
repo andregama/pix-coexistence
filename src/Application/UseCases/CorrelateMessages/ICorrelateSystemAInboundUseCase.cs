@@ -12,10 +12,17 @@ public interface ICorrelateSystemAInboundUseCase
     /// by its MsgId. These are correlated via a SpiSentMsg.MsgIdSystemA lookup; when the MsgId is not
     /// found the message is still replicated to System B (unchanged) with a warning, never DLQ'd.
     /// </param>
+    /// <param name="correlateByOriginalEndToEndIdTypes">
+    /// Inbound responses (e.g. pacs.004 returns) that reference the original transfer by its
+    /// OrgnlEndToEndId. These are correlated via a SpiSentMsg.IdempotentId lookup on that value; when
+    /// the original is not found (e.g. TTL-expired) the message is still replicated to System B
+    /// (unchanged) with a warning, never DLQ'd.
+    /// </param>
     Task ExecuteAsync(
         string rawCdcJson,
         IReadOnlySet<string> allowedTypes,
         IReadOnlySet<string> primaryTypes,
         IReadOnlySet<string> correlateByOriginalMsgIdTypes,
+        IReadOnlySet<string> correlateByOriginalEndToEndIdTypes,
         CancellationToken cancellationToken);
 }

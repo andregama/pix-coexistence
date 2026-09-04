@@ -31,6 +31,8 @@ public sealed class CorrelateSystemAInboundUseCaseTests
 
     private static readonly IReadOnlySet<string> NoCorrelateByMsgId = new HashSet<string>();
 
+    private static readonly IReadOnlySet<string> NoCorrelateByEndToEndId = new HashSet<string>();
+
     private static readonly string CdcJson = JsonSerializer.Serialize(new
     {
         after = new { XmlMsg = "<pacs002/>", Problem = (string?)null }
@@ -90,7 +92,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         _transformerMock.Verify(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"), Times.Once);
@@ -132,7 +134,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, NoCorrelateByMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _transformerMock.Verify(t => t.Transform("<pacs002/>", "<trck-a/>", "<trck-b/>"), Times.Once);
         published.Should().NotBeNull();
@@ -165,7 +167,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(cdc, allowed, primary, NoCorrelateByMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(cdc, allowed, primary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         // No SpiSentMsg correlation and no transform for a primary message.
@@ -208,7 +210,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, byMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, byMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _sentRepoMock.Verify(r => r.FindByMsgIdSystemAAsync("MSG-A", It.IsAny<CancellationToken>()), Times.Once);
         // Never falls through to the by-IdempotentId correlation path.
@@ -243,13 +245,84 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(cdc, allowed, NoPrimary, byMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(cdc, allowed, NoPrimary, byMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         published.Should().NotBeNull();
         JsonSerializer.Deserialize<SystemBInboundReadyDto>(
             Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
             .TransformedXml.Should().Be("<admi002-raw/>"); // unchanged pass-through
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Pacs004_CorrelatesToOriginalTransfer_ByOrgnlEndToEndId_AndTransforms()
+    {
+        // A received pacs.004 return references the original transfer via OrgnlEndToEndId; correlation
+        // is a SpiSentMsg.IdempotentId lookup on that value. Its own id (RtrId) stays the received-msg key.
+        var allowed = new HashSet<string> { "pacs.004" };
+        var byE2E = new HashSet<string> { "pacs.004" };
+        var original = SpiSentMsg.Create("E2E-ORIGINAL", "pacs.008");
+        original.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null);
+        original.UpdateFromSystemB("MSG-B", "<pacs008-b/>", null);
+
+        _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.004");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "pacs.004")).Returns("RTR-1"); // return's own id
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("pacs.004")).Returns("MessageKey");
+        _xmlParserMock.Setup(p => p.ExtractOriginalIdempotentId(It.IsAny<string>(), "pacs.004")).Returns("E2E-ORIGINAL");
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("RTR-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-ORIGINAL", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(original);
+        _transformerMock.Setup(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"))
+            .Returns("<pacs004-for-b/>");
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, NoCorrelateByMsgId, byE2E, CancellationToken.None);
+
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-ORIGINAL", It.IsAny<CancellationToken>()), Times.Once);
+        published.Should().NotBeNull();
+        var ready = JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!;
+        ready.IdempotentId.Should().Be("RTR-1"); // keyed by the return id, not the original
+        ready.TransformedXml.Should().Be("<pacs004-for-b/>");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Pacs004_OriginalTransferNotFound_ReplicatesUnchanged_WithoutThrowing()
+    {
+        // Returns can arrive after the 30-day SpiSentMsg TTL; the original is gone. The pacs.004 must
+        // still be replicated to System B unchanged, not dead-lettered.
+        var allowed = new HashSet<string> { "pacs.004" };
+        var byE2E = new HashSet<string> { "pacs.004" };
+        var cdc = JsonSerializer.Serialize(new { after = new { XmlMsg = "<pacs004-raw/>", Problem = (string?)null } });
+
+        _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.004");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "pacs.004")).Returns("RTR-2");
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("pacs.004")).Returns("MessageKey");
+        _xmlParserMock.Setup(p => p.ExtractOriginalIdempotentId(It.IsAny<string>(), "pacs.004")).Returns("E2E-EXPIRED");
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("RTR-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-EXPIRED", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiSentMsg?)null);
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(cdc, allowed, NoPrimary, NoCorrelateByMsgId, byE2E, CancellationToken.None);
+
+        _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        published.Should().NotBeNull();
+        JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
+            .TransformedXml.Should().Be("<pacs004-raw/>"); // unchanged pass-through
     }
 
     [Fact]
@@ -260,7 +333,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync((SpiSentMsg?)null);
 
-        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, CancellationToken.None))
+        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None))
             .Should().ThrowAsync<InvalidOperationException>();
 
         // The lookup is retried up to MaxAttempts (3) before giving up to the DLQ.
@@ -295,7 +368,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
             Times.Exactly(3));
@@ -314,7 +387,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync(incomplete);
 
-        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, CancellationToken.None))
+        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None))
             .Should().ThrowAsync<InvalidOperationException>();
     }
 
@@ -323,7 +396,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     {
         _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.999");
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Never);
         _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(),

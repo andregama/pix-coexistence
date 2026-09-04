@@ -77,6 +77,16 @@ public sealed class ResponseTransformOptions
             SentValueXPath = "//*[local-name()='AppHdr']/*[local-name()='BizMsgIdr'] | //*[local-name()='GrpHdr']/*[local-name()='MsgId']",
             ResponseTargetXPath = "//*[local-name()='RltdRef']/*[local-name()='Ref']"
         },
+        // pacs.004 (payment return) references the returned payment via TxInf/OrgnlEndToEndId.
+        // Correlated to the original pacs.008 pair; rewrite the reference from A's EndToEndId to B's so
+        // System B recognises the return. Target is TxInf (distinct from pacs.002's TxInfAndSts), so it
+        // only fires on pacs.004, and only when the two sides' EndToEndIds differ.
+        new ResponseTransformRule
+        {
+            Name = "ReturnOriginalEndToEndId",
+            SentValueXPath = "//*[local-name()='CdtTrfTxInf']/*[local-name()='PmtId']/*[local-name()='EndToEndId']",
+            ResponseTargetXPath = "//*[local-name()='TxInf']/*[local-name()='OrgnlEndToEndId']"
+        },
     ];
 }
 

@@ -170,6 +170,21 @@ public sealed class InboundResponseTransformerTests
     }
 
     [Fact]
+    public void Transform_Pacs004_RewritesReturnOriginalEndToEndId_FromAToB()
+    {
+        // pacs.004 references the returned payment via TxInf/OrgnlEndToEndId; correlated to the original
+        // pacs.008 pair, rewrite it from A's EndToEndId to B's.
+        var originalA = "<Document><FIToFICstmrCdtTrf><CdtTrfTxInf><PmtId><EndToEndId>E2E-A</EndToEndId></PmtId></CdtTrfTxInf></FIToFICstmrCdtTrf></Document>";
+        var originalB = "<Document><FIToFICstmrCdtTrf><CdtTrfTxInf><PmtId><EndToEndId>E2E-B</EndToEndId></PmtId></CdtTrfTxInf></FIToFICstmrCdtTrf></Document>";
+        var pacs004 = "<Document><PmtRtr><TxInf><RtrId>D-1</RtrId><OrgnlEndToEndId>E2E-A</OrgnlEndToEndId></TxInf></PmtRtr></Document>";
+
+        var result = _transformer.Transform(pacs004, originalA, originalB);
+
+        result.Should().Contain("<OrgnlEndToEndId>E2E-B</OrgnlEndToEndId>");
+        result.Should().NotContain("E2E-A");
+    }
+
+    [Fact]
     public void Transform_ReturnsUnchanged_WhenAAndBAreEqual()
     {
         var sent = Pacs008("E2E-SAME", "DICT");
