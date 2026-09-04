@@ -1,3 +1,5 @@
+using ConvivenciaPix.Application.UseCases.CorrelateMessages;
+
 namespace ConvivenciaPix.SpiCorrelateWorker;
 
 public sealed class CorrelationOptions
@@ -33,13 +35,15 @@ public sealed class CorrelationOptions
     // is not found the pacs.004 is still replicated to System B (unchanged) with a warning, not DLQ'd.
     public string CorrelateByOriginalEndToEndIdMessageTypes { get; set; } = "pacs.004";
 
+    /// <summary>The allowed set alone — used by the outbound correlation use cases.</summary>
     public IReadOnlySet<string> GetAllowedSet() => ToSet(AllowedMessageTypes);
 
-    public IReadOnlySet<string> GetPrimaryInboundSet() => ToSet(PrimaryInboundMessageTypes);
-
-    public IReadOnlySet<string> GetCorrelateByOriginalMsgIdSet() => ToSet(CorrelateByOriginalMsgIdMessageTypes);
-
-    public IReadOnlySet<string> GetCorrelateByOriginalEndToEndIdSet() => ToSet(CorrelateByOriginalEndToEndIdMessageTypes);
+    /// <summary>The full inbound classification bundle used by the System A inbound correlation.</summary>
+    public InboundCorrelationTypes GetInboundCorrelationTypes() => new(
+        Allowed: ToSet(AllowedMessageTypes),
+        Primary: ToSet(PrimaryInboundMessageTypes),
+        CorrelateByOriginalMsgId: ToSet(CorrelateByOriginalMsgIdMessageTypes),
+        CorrelateByOriginalEndToEndId: ToSet(CorrelateByOriginalEndToEndIdMessageTypes));
 
     private static IReadOnlySet<string> ToSet(string csv) =>
         csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

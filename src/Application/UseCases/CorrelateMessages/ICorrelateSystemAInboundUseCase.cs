@@ -2,27 +2,9 @@ namespace ConvivenciaPix.Application.UseCases.CorrelateMessages;
 
 public interface ICorrelateSystemAInboundUseCase
 {
-    /// <param name="primaryTypes">
-    /// Inbound message types that are primary/unsolicited initiations (e.g. a received pacs.008 Pix
-    /// credit) rather than responses to an A/B outbound. These skip SpiSentMsg correlation and are
-    /// passed through to System B unchanged.
-    /// </param>
-    /// <param name="correlateByOriginalMsgIdTypes">
-    /// Inbound message-level responses (e.g. admi.002 rejections) that reference the original message
-    /// by its MsgId. These are correlated via a SpiSentMsg.MsgIdSystemA lookup; when the MsgId is not
-    /// found the message is still replicated to System B (unchanged) with a warning, never DLQ'd.
-    /// </param>
-    /// <param name="correlateByOriginalEndToEndIdTypes">
-    /// Inbound responses (e.g. pacs.004 returns) that reference the original transfer by its
-    /// OrgnlEndToEndId. These are correlated via a SpiSentMsg.IdempotentId lookup on that value; when
-    /// the original is not found (e.g. TTL-expired) the message is still replicated to System B
-    /// (unchanged) with a warning, never DLQ'd.
-    /// </param>
-    Task ExecuteAsync(
-        string rawCdcJson,
-        IReadOnlySet<string> allowedTypes,
-        IReadOnlySet<string> primaryTypes,
-        IReadOnlySet<string> correlateByOriginalMsgIdTypes,
-        IReadOnlySet<string> correlateByOriginalEndToEndIdTypes,
-        CancellationToken cancellationToken);
+    /// <summary>
+    /// Correlates a System A inbound (SPI→PSP) message and delivers it to System B. Routing is driven
+    /// by <paramref name="types"/> — see <see cref="InboundCorrelationTypes"/>.
+    /// </summary>
+    Task ExecuteAsync(string rawCdcJson, InboundCorrelationTypes types, CancellationToken cancellationToken);
 }

@@ -48,18 +48,12 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         _logger = logger;
     }
 
-    public async Task ExecuteAsync(
-        string rawCdcJson,
-        IReadOnlySet<string> allowedTypes,
-        IReadOnlySet<string> primaryTypes,
-        IReadOnlySet<string> correlateByOriginalMsgIdTypes,
-        IReadOnlySet<string> correlateByOriginalEndToEndIdTypes,
-        CancellationToken ct)
+    public async Task ExecuteAsync(string rawCdcJson, InboundCorrelationTypes types, CancellationToken ct)
     {
         var mapped = SystemAInboundMapper.Map(rawCdcJson);
         var msgType = _xmlParser.ExtractMessageType(mapped.XmlMsg);
 
-        if (!allowedTypes.Contains(msgType))
+        if (!types.Allowed.Contains(msgType))
         {
             _logger.LogDebug("SystemA inbound: skipping unsupported MsgType={MsgType}", msgType);
             return;
@@ -92,7 +86,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         // A/B outbound message, so there is no SpiSentMsg to correlate and nothing to rewrite. Pass
         // them through to System B unchanged — the proxy worker signs and delivers them like any
         // other System B inbound, so B also processes the incoming transaction.
-        if (primaryTypes.Contains(msgType))
+        if (types.Primary.Contains(msgType))
         {
             await PublishReadyForSystemBAsync(idempotentId, msgType, mapped.XmlMsg, ct);
             _logger.LogInformation(
@@ -104,7 +98,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         // Message-level responses (e.g. admi.002 rejections) reference the original message by its
         // MsgId, not by a transaction/correlation key. Correlate via SpiSentMsg.MsgIdSystemA; when
         // not found the message is still replicated to System B (unchanged) with a warning, not DLQ'd.
-        if (correlateByOriginalMsgIdTypes.Contains(msgType))
+        if (types.CorrelateByOriginalMsgId.Contains(msgType))
         {
             var byMsgId = string.IsNullOrEmpty(originalId)
                 ? null
@@ -118,7 +112,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         // 90 days later while SpiSentMsg has a 30-day TTL, so when the original is gone the pacs.004 is
         // still replicated to System B (unchanged) with a warning, not DLQ'd. Note: idempotentId is the
         // return's own id (RtrId), so multiple returns for one original each get their own row.
-        if (correlateByOriginalEndToEndIdTypes.Contains(msgType))
+        if (types.CorrelateByOriginalEndToEndId.Contains(msgType))
         {
             var byOriginal = string.IsNullOrEmpty(originalId)
                 ? null

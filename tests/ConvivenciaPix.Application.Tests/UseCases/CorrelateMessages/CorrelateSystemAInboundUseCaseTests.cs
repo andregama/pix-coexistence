@@ -27,11 +27,16 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     private static readonly IReadOnlySet<string> AllowedTypes =
         new HashSet<string> { "pacs.002" };
 
-    private static readonly IReadOnlySet<string> NoPrimary = new HashSet<string>();
+    private static readonly IReadOnlySet<string> Empty = new HashSet<string>();
 
-    private static readonly IReadOnlySet<string> NoCorrelateByMsgId = new HashSet<string>();
-
-    private static readonly IReadOnlySet<string> NoCorrelateByEndToEndId = new HashSet<string>();
+    // Builds the inbound classification bundle; defaults to allowing only pacs.002 with no special
+    // routing, so each test overrides just the sets it exercises.
+    private static InboundCorrelationTypes Types(
+        IReadOnlySet<string>? allowed = null,
+        IReadOnlySet<string>? primary = null,
+        IReadOnlySet<string>? byMsgId = null,
+        IReadOnlySet<string>? byEndToEnd = null) =>
+        new(allowed ?? AllowedTypes, primary ?? Empty, byMsgId ?? Empty, byEndToEnd ?? Empty);
 
     private static readonly string CdcJson = JsonSerializer.Serialize(new
     {
@@ -92,7 +97,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         _transformerMock.Verify(t => t.Transform("<pacs002/>", "<pacs008-a/>", "<pacs008-b/>"), Times.Once);
@@ -134,7 +139,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(allowed: allowed), CancellationToken.None);
 
         _transformerMock.Verify(t => t.Transform("<pacs002/>", "<trck-a/>", "<trck-b/>"), Times.Once);
         published.Should().NotBeNull();
@@ -167,7 +172,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(cdc, allowed, primary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(cdc, Types(allowed: allowed, primary: primary), CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Once);
         // No SpiSentMsg correlation and no transform for a primary message.
@@ -210,7 +215,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, byMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(allowed: allowed, byMsgId: byMsgId), CancellationToken.None);
 
         _sentRepoMock.Verify(r => r.FindByMsgIdSystemAAsync("MSG-A", It.IsAny<CancellationToken>()), Times.Once);
         // Never falls through to the by-IdempotentId correlation path.
@@ -245,7 +250,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(cdc, allowed, NoPrimary, byMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(cdc, Types(allowed: allowed, byMsgId: byMsgId), CancellationToken.None);
 
         _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         published.Should().NotBeNull();
@@ -282,7 +287,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, allowed, NoPrimary, NoCorrelateByMsgId, byE2E, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(allowed: allowed, byEndToEnd: byE2E), CancellationToken.None);
 
         _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-ORIGINAL", It.IsAny<CancellationToken>()), Times.Once);
         published.Should().NotBeNull();
@@ -316,7 +321,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(cdc, allowed, NoPrimary, NoCorrelateByMsgId, byE2E, CancellationToken.None);
+        await _sut.ExecuteAsync(cdc, Types(allowed: allowed, byEndToEnd: byE2E), CancellationToken.None);
 
         _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         published.Should().NotBeNull();
@@ -333,7 +338,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync((SpiSentMsg?)null);
 
-        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None))
+        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None))
             .Should().ThrowAsync<InvalidOperationException>();
 
         // The lookup is retried up to MaxAttempts (3) before giving up to the DLQ.
@@ -368,7 +373,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
             .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
             .Returns(Task.CompletedTask);
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
 
         _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
             Times.Exactly(3));
@@ -387,7 +392,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync(incomplete);
 
-        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None))
+        await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None))
             .Should().ThrowAsync<InvalidOperationException>();
     }
 
@@ -396,7 +401,7 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     {
         _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.999");
 
-        await _sut.ExecuteAsync(CdcJson, AllowedTypes, NoPrimary, NoCorrelateByMsgId, NoCorrelateByEndToEndId, CancellationToken.None);
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
 
         _receivedRepoMock.Verify(r => r.AddAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()), Times.Never);
         _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(),
