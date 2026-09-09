@@ -24,25 +24,28 @@ public sealed class InboundResponseTransformer : IInboundResponseTransformer
         _logger = logger;
     }
 
-    public string Transform(string responseXml, string systemAPacs008Xml, string systemBPacs008Xml)
+    public string Transform(string responseXml, string? systemAPacs008Xml, string systemBPacs008Xml)
     {
         var responseDoc = new XmlDocument { PreserveWhitespace = true };
         responseDoc.LoadXml(responseXml);
 
-        var sentA = new XmlDocument();
-        sentA.LoadXml(systemAPacs008Xml);
+        // System A's request is optional: when absent, each rule's baseline value is read from the
+        // response node itself (Bacen echoes System A's identifiers back into the response).
+        XmlDocument? sentA = null;
+        if (systemAPacs008Xml is not null)
+        {
+            sentA = new XmlDocument();
+            sentA.LoadXml(systemAPacs008Xml);
+        }
         var sentB = new XmlDocument();
         sentB.LoadXml(systemBPacs008Xml);
 
         var mutated = false;
         foreach (var rule in _rules)
         {
-            var valueA = SelectText(sentA, rule.SentValueXPath);
             var valueB = SelectText(sentB, rule.SentValueXPath);
-
-            // Nothing to map if either side is missing or the values already match.
-            if (valueA is null || valueB is null || string.Equals(valueA, valueB, StringComparison.Ordinal))
-                continue;
+            if (valueB is null)
+                continue; // nothing to map System B to
 
             var target = SelectNode(responseDoc, rule.ResponseTargetXPath);
             if (target is null)
@@ -51,6 +54,16 @@ public sealed class InboundResponseTransformer : IInboundResponseTransformer
                     "Transform rule {Rule}: response target node absent, skipping.", rule.Name);
                 continue;
             }
+
+            // Baseline "System A value": prefer System A's stored request; otherwise fall back to the
+            // response node's own text, which carries System A's echoed value.
+            var valueA = sentA is not null
+                ? SelectText(sentA, rule.SentValueXPath)
+                : target.InnerText.Trim();
+
+            // Nothing to map if the baseline is missing or the values already match.
+            if (valueA is null || string.Equals(valueA, valueB, StringComparison.Ordinal))
+                continue;
 
             target.InnerText = valueB;
             mutated = true;

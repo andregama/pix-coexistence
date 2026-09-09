@@ -62,6 +62,21 @@ public sealed class SpiSentMsgTests
     }
 
     [Fact]
+    public void CanTransformForSystemB_RequiresOnlySystemBXml()
+    {
+        var msg = SpiSentMsg.Create("E12345678", "pacs.008");
+        msg.CanTransformForSystemB.Should().BeFalse("neither side is present yet");
+
+        msg.UpdateFromSystemA("MSG-A", "<xmlA/>", null);
+        msg.CanTransformForSystemB.Should().BeFalse("only System A's side is present");
+
+        var other = SpiSentMsg.Create("E87654321", "pacs.008");
+        other.UpdateFromSystemB("MSG-B", "<xmlB/>", null);
+        other.CanTransformForSystemB.Should().BeTrue("System B's side alone is enough to transform");
+        other.IsComplete.Should().BeFalse("System A's side is still missing");
+    }
+
+    [Fact]
     public void UpdateFromSystemA_WithErrorCode_SetsErrorCode()
     {
         var msg = SpiSentMsg.Create("E12345678", "pacs.008");

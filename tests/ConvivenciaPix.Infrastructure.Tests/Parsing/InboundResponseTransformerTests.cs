@@ -54,6 +54,32 @@ public sealed class InboundResponseTransformerTests
     }
 
     [Fact]
+    public void Transform_WithNullSystemA_UsesResponseNodeAsBaseline_AndRewritesToB()
+    {
+        // System A's request was never persisted; the pacs.002 echoes System A's EndToEndId (E2E-A)
+        // in its own node, so that value is the baseline and is rewritten to System B's.
+        var sentB = Pacs008("E2E-B", "DICT");
+        var response = Pacs002("E2E-A");
+
+        var result = _transformer.Transform(response, null, sentB);
+
+        result.Should().Contain("<OrgnlEndToEndId>E2E-B</OrgnlEndToEndId>");
+        result.Should().NotContain("E2E-A");
+    }
+
+    [Fact]
+    public void Transform_WithNullSystemA_LeavesResponseUnchanged_WhenValueAlreadyMatchesB()
+    {
+        // Response already carries System B's value; nothing to rewrite even without System A's request.
+        var sentB = Pacs008("E2E-B", "DICT");
+        var response = Pacs002("E2E-B");
+
+        var result = _transformer.Transform(response, null, sentB);
+
+        result.Should().Contain("<OrgnlEndToEndId>E2E-B</OrgnlEndToEndId>");
+    }
+
+    [Fact]
     public void Transform_RewritesInitiationForm_WhenPresentInResponse()
     {
         var sentA = Pacs008("E2E-A", "DICT");

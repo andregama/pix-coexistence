@@ -114,13 +114,13 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
             return;
         }
 
-        // Correlate against the stored pacs.008 A/B pair so the response can be rewritten to the
-        // values System B expects. The row only becomes complete once both outbound sides land; the
-        // inbound response can race ahead of System B's side, so retry with backoff before giving up.
-        // Persistently missing/incomplete correlation -> DLQ (via KafkaConsumerBase).
+        // Correlate against the stored pacs.008 so the response can be rewritten to the values System
+        // B expects. Only System B's outbound side is required (System A's is an optional skip-guard in
+        // the transformer); the inbound response can race ahead of System B's side, so retry with
+        // backoff before giving up. Persistently missing System B side -> DLQ (via KafkaConsumerBase).
         var sent = await CorrelateSentMsgAsync(idempotentId, msgType, ct);
 
-        var transformedXml = _transformer.Transform(mapped.XmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
+        var transformedXml = _transformer.Transform(mapped.XmlMsg, sent.XmlMsgSystemA, sent.XmlMsgSystemB!);
 
         await PublishReadyForSystemBAsync(idempotentId, msgType, transformedXml, ct);
 
@@ -131,16 +131,16 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
 
     /// <summary>
     /// Resilient correlation for responses that reference an original message/transfer: when the
-    /// original (<paramref name="sent"/>) is found and complete, transform the message for System B;
-    /// otherwise replicate it unchanged and warn. Never dead-letters.
+    /// original (<paramref name="sent"/>) is found with System B's side present, transform the message
+    /// for System B; otherwise replicate it unchanged and warn. Never dead-letters.
     /// </summary>
     private async Task PublishCorrelatedOrReplicateAsync(
         string idempotentId, string msgType, string xmlMsg, string? originalRef, SpiSentMsg? sent, CancellationToken ct)
     {
         string xmlForSystemB;
-        if (sent is not null && sent.IsComplete)
+        if (sent is not null && sent.CanTransformForSystemB)
         {
-            xmlForSystemB = _transformer.Transform(xmlMsg, sent.XmlMsgSystemA!, sent.XmlMsgSystemB!);
+            xmlForSystemB = _transformer.Transform(xmlMsg, sent.XmlMsgSystemA, sent.XmlMsgSystemB!);
             _logger.LogInformation(
                 "SystemA inbound {Type} correlated to original ref={OrigRef} and transformed for System B. IdempotentId={Id}",
                 msgType, originalRef, idempotentId);
@@ -149,7 +149,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         {
             xmlForSystemB = xmlMsg;
             _logger.LogWarning(
-                "SystemA inbound {Type}: original ref={OrigRef} not found or incomplete in SpiSentMsg; " +
+                "SystemA inbound {Type}: original ref={OrigRef} not found or missing System B data in SpiSentMsg; " +
                 "replicating to System B without correlation. IdempotentId={Id}",
                 msgType, originalRef, idempotentId);
         }
@@ -177,10 +177,10 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
     }
 
     /// <summary>
-    /// Re-reads the correlated <c>SpiSentMsg</c> until it is complete, applying bounded exponential
-    /// backoff to absorb the race where the inbound response arrives before System B's outbound side
-    /// is persisted. Throws once <see cref="CorrelateInboundRetryOptions.MaxAttempts"/> is reached so
-    /// the consumer dead-letters the event.
+    /// Re-reads the correlated <c>SpiSentMsg</c> until System B's outbound side is present, applying
+    /// bounded exponential backoff to absorb the race where the inbound response arrives before System
+    /// B's side is persisted. Throws once <see cref="CorrelateInboundRetryOptions.MaxAttempts"/> is
+    /// reached so the consumer dead-letters the event.
     /// </summary>
     private async Task<SpiSentMsg> CorrelateSentMsgAsync(string idempotentId, string msgType, CancellationToken ct)
     {
@@ -189,12 +189,12 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         {
             // FindByIdempotentIdAsync reads AsNoTracking, so each attempt observes newly-committed data.
             var sent = await _sentMsgRepo.FindByIdempotentIdAsync(idempotentId, ct);
-            if (sent is not null && sent.IsComplete)
+            if (sent is not null && sent.CanTransformForSystemB)
                 return sent;
 
             if (attempt >= maxAttempts)
                 throw new InvalidOperationException(
-                    $"SpiSentMsg not found or incomplete for IdempotentId={idempotentId} MsgType={msgType} " +
+                    $"SpiSentMsg not found or missing System B data for IdempotentId={idempotentId} MsgType={msgType} " +
                     $"after {attempt} attempt(s). Cannot transform response for System B. Routing to DLQ.");
 
             var delay = ComputeBackoff(attempt);

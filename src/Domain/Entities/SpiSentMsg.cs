@@ -18,6 +18,13 @@ public sealed class SpiSentMsg
 
     public bool IsComplete => XmlMsgSystemA is not null && XmlMsgSystemB is not null;
 
+    /// <summary>
+    /// A Bacen response can be rewritten for System B as soon as System B's request XML is present;
+    /// System A's request XML is only a skip-guard for the transformer (see IInboundResponseTransformer).
+    /// Distinct from <see cref="IsComplete"/>, which requires both sides for cross-system comparison.
+    /// </summary>
+    public bool CanTransformForSystemB => XmlMsgSystemB is not null;
+
     private SpiSentMsg() { }
 
     public static SpiSentMsg Create(string idempotentId, string msgType)

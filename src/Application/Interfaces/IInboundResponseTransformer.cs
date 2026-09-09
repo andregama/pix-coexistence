@@ -12,6 +12,9 @@ public interface IInboundResponseTransformer
     /// Returns <paramref name="responseXml"/> with each configured field rewritten from
     /// System A's value to System B's value, computed from the two pacs.008 requests.
     /// Rules whose target node is absent in the response are skipped.
+    /// <paramref name="systemAPacs008Xml"/> is optional: when null, the baseline "System A value"
+    /// is read from the response node itself (Bacen echoes System A's identifiers into the response),
+    /// so a response still correlates for System B when System A's request was never persisted.
     /// </summary>
-    string Transform(string responseXml, string systemAPacs008Xml, string systemBPacs008Xml);
+    string Transform(string responseXml, string? systemAPacs008Xml, string systemBPacs008Xml);
 }

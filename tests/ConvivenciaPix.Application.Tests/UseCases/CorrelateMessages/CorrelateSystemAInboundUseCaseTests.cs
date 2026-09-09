@@ -110,7 +110,38 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         ready.TransformedXml.Should().Be("<pacs002-transformed/>");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Pacs002_SystemBOnly_Correlates_NoDlq()
+    {
+        // The sent row has System B's side but never received System A's XML. System A's XML is only a
+        // transformer skip-guard, so correlation must still transform for System B rather than DLQ.
+        var systemBOnly = SpiSentMsg.Create("E2E-A", "pacs.008");
+        systemBOnly.UpdateFromSystemB("MSG-B", "<pacs008-b/>", null); // System A side never landed
 
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(systemBOnly);
+        _transformerMock
+            .Setup(t => t.Transform("<pacs002/>", null, "<pacs008-b/>"))
+            .Returns("<pacs002-transformed/>");
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
+
+        // Correlated on the first read (no retry needed) and delivered — never dead-lettered.
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()), Times.Once);
+        _transformerMock.Verify(t => t.Transform("<pacs002/>", null, "<pacs008-b/>"), Times.Once);
+        published.Should().NotBeNull();
+        JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
+            .TransformedXml.Should().Be("<pacs002-transformed/>");
+    }
 
     [Fact]
     public async Task ExecuteAsync_Camt025_CorrelatesToTrck002Pair_AndPublishes()
@@ -328,6 +359,43 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         JsonSerializer.Deserialize<SystemBInboundReadyDto>(
             Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
             .TransformedXml.Should().Be("<pacs004-raw/>"); // unchanged pass-through
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Pacs004_OriginalSystemBOnly_Transforms_NotReplicated()
+    {
+        // The original transfer has System B's side but no System A XML. The resilient path must still
+        // transform for System B (System A's XML is only a skip-guard), not replicate unchanged.
+        var allowed = new HashSet<string> { "pacs.004" };
+        var byE2E = new HashSet<string> { "pacs.004" };
+        var cdc = JsonSerializer.Serialize(new { after = new { XmlMsg = "<pacs004-raw/>", Problem = (string?)null } });
+        var original = SpiSentMsg.Create("E2E-ORIGINAL", "pacs.008");
+        original.UpdateFromSystemB("MSG-B", "<pacs008-b/>", null); // System A side never landed
+
+        _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.004");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "pacs.004")).Returns("RTR-3");
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("pacs.004")).Returns("MessageKey");
+        _xmlParserMock.Setup(p => p.ExtractOriginalIdempotentId(It.IsAny<string>(), "pacs.004")).Returns("E2E-ORIGINAL");
+        _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("RTR-3", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SpiReceivedMsg?)null);
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-ORIGINAL", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(original);
+        _transformerMock.Setup(t => t.Transform("<pacs004-raw/>", null, "<pacs008-b/>"))
+            .Returns("<pacs004-for-b/>");
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
+
+        await _sut.ExecuteAsync(cdc, Types(allowed: allowed, byEndToEnd: byE2E), CancellationToken.None);
+
+        _transformerMock.Verify(t => t.Transform("<pacs004-raw/>", null, "<pacs008-b/>"), Times.Once);
+        published.Should().NotBeNull();
+        JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
+            .TransformedXml.Should().Be("<pacs004-for-b/>");
     }
 
     [Fact]
