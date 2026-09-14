@@ -206,6 +206,57 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         series.Points[1].PropagatedPct.Should().Be(100);
     }
 
+    [Fact]
+    public async Task ErrorTimeSeries_ReturnsDailySystemAAndBErrorCounts_Ordered()
+    {
+        var type = "et-" + Guid.NewGuid().ToString("N")[..8];
+        // Unique historical days so aggregation over the whole window sees only this test's rows.
+        var day1 = new DateTime(2026, 5, 10, 10, 0, 0, DateTimeKind.Utc);
+        var day2 = new DateTime(2026, 5, 11, 10, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Day 1 — inbound A error, inbound B error, outbound A error, and a clean (no-error) row.
+            ctx.SpiReceivedMsgs.Add(SpiReceivedMsg.CreateFromSystemA("rA" + type, type, null, "<a/>", errorCode: "EA1"));
+            var recvB = SpiReceivedMsg.CreateFromSystemA("rB" + type, type, null, "<a/>", errorCode: null);
+            recvB.SetSystemBXml("<b/>", "EB1");
+            ctx.SpiReceivedMsgs.Add(recvB);
+            ctx.SpiReceivedMsgs.Add(FromA("clean", type, xmlB: true, consumed: false, source: "MessageKey"));
+            var sentA = SpiSentMsg.Create("sA" + type, type);
+            sentA.UpdateFromSystemA("MSGA", "<a/>", "EA2");
+            ctx.SpiSentMsgs.Add(sentA);
+            // Day 1 — a pibr.002 carrying an error that must be excluded from the totals.
+            ctx.SpiReceivedMsgs.Add(SpiReceivedMsg.CreateFromSystemA("echo" + type, "pibr.002", null, "<a/>", errorCode: "EX9"));
+
+            // Day 2 — a single outbound B error.
+            var sentB = SpiSentMsg.Create("sB" + type, type);
+            sentB.UpdateFromSystemB("MSGB", "<b/>", "EB2");
+            ctx.SpiSentMsgs.Add(sentB);
+
+            await ctx.SaveChangesAsync();
+
+            foreach (var (key, day) in new[] { ("rA", day1), ("rB", day1), ("clean", day1), ("echo", day1) })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1}", day, key + type);
+            foreach (var (key, day) in new[] { ("sA", day1), ("sB", day2) })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdempotentId = {1}", day, key + type);
+        }
+
+        var series = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetErrorTimeSeriesAsync(
+                from: new DateTime(2026, 5, 9, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2026, 5, 12, 0, 0, 0, DateTimeKind.Utc));
+
+        series.Points.Should().HaveCount(2);
+        series.Points[0].Day.Should().Be(new DateTime(2026, 5, 10));
+        series.Points[0].SystemAErrors.Should().Be(2); // inbound EA1 + outbound EA2 (pibr.002 EX9 excluded)
+        series.Points[0].SystemBErrors.Should().Be(1); // inbound EB1
+        series.Points[1].Day.Should().Be(new DateTime(2026, 5, 11));
+        series.Points[1].SystemAErrors.Should().Be(0);
+        series.Points[1].SystemBErrors.Should().Be(1); // outbound EB2
+    }
+
     private static SpiSentMsg SentPair(string type, string key, bool correlated)
     {
         var msg = SpiSentMsg.Create(key + type, type);

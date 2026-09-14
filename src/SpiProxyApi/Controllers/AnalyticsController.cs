@@ -50,4 +50,19 @@ public sealed class AnalyticsController : ControllerBase
         var series = await _reader.GetPropagationTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
         return Ok(series);
     }
+
+    /// <summary>
+    /// Daily evolution of propagated error counts (System A vs System B error codes) over the optional
+    /// <paramref name="from"/>/<paramref name="to"/> (UTC) window.
+    /// </summary>
+    [HttpGet("errors-timeseries")]
+    [ProducesResponseType(typeof(ErrorTimeSeriesDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ErrorTimeSeriesDto>> GetErrorTimeSeries(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var series = await _reader.GetErrorTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
+        return Ok(series);
+    }
 }

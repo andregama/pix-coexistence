@@ -249,6 +249,47 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
         return new PropagationTimeSeriesDto(from, to, points);
     }
 
+    public async Task<ErrorTimeSeriesDto> GetErrorTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
+    {
+        // Daily buckets of propagated error codes: per day, rows carrying a System A vs System B error.
+        // Inbound (received) and outbound (sent) are counted separately then merged by day index.
+        // DateDiffDay(epoch, CreatedAt) is the day index (translated server-side, like the trend query).
+        var epoch = DateTime.UnixEpoch;
+
+        var recvRaw = await FilterReceived(_db.SpiReceivedMsgs.AsNoTracking(), from, to)
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                A = g.Sum(x => x.SystemAErrorCode != null ? 1L : 0L),
+                B = g.Sum(x => x.SystemBErrorCode != null ? 1L : 0L),
+            })
+            .ToListAsync(cancellationToken);
+
+        var sentRaw = await FilterSent(_db.SpiSentMsgs.AsNoTracking(), from, to)
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                A = g.Sum(x => x.SystemAErrorCode != null ? 1L : 0L),
+                B = g.Sum(x => x.SystemBErrorCode != null ? 1L : 0L),
+            })
+            .ToListAsync(cancellationToken);
+
+        // Merge inbound + outbound by day index (union of keys), sum A and B, order ascending.
+        var points = recvRaw.Concat(sentRaw)
+            .GroupBy(r => r.DayIndex)
+            .Select(g => new ErrorPointDto(
+                Day: epoch.AddDays(g.Key),
+                SystemAErrors: g.Sum(r => r.A),
+                SystemBErrors: g.Sum(r => r.B)))
+            .OrderBy(p => p.Day)
+            .ToList();
+
+        return new ErrorTimeSeriesDto(from, to, points);
+    }
+
     // pibr.002 (proxy-synthesised Echo reply) is excluded from all counts; date bounds apply to CreatedAt.
     private static IQueryable<SpiReceivedMsg> FilterReceived(IQueryable<SpiReceivedMsg> q, DateTime? from, DateTime? to)
     {

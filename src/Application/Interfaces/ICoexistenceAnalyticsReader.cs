@@ -22,4 +22,11 @@ public interface ICoexistenceAnalyticsReader
     /// </summary>
     Task<PropagationTimeSeriesDto> GetPropagationTimeSeriesAsync(
         DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Daily evolution of propagated error counts (System A vs System B error codes) over the optional
+    /// [<paramref name="from"/>, <paramref name="to"/>] window (UTC). Days with no errors produce no point.
+    /// </summary>
+    Task<ErrorTimeSeriesDto> GetErrorTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
 }
