@@ -257,6 +257,65 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         series.Points[1].SystemBErrors.Should().Be(1); // outbound EB2
     }
 
+    [Fact]
+    public async Task AmountTimeSeries_SumsReceivedAndSentBySuccessFailed_Ordered()
+    {
+        var type = "am-" + Guid.NewGuid().ToString("N")[..8];
+        var day1 = new DateTime(2026, 6, 10, 10, 0, 0, DateTimeKind.Utc);
+        var day2 = new DateTime(2026, 6, 11, 10, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Received — day1: success 100, failed 50; day2: success 200+25 withdrawal.
+            var r1 = SpiReceivedMsg.CreateFromSystemA("r1" + type, type, null, "<a/>", errorCode: null);
+            r1.SetAmounts(100m, 0m);
+            var r2 = SpiReceivedMsg.CreateFromSystemA("r2" + type, type, null, "<a/>", errorCode: null);
+            r2.SetSystemBXml("<b/>", "EB1"); // failed
+            r2.SetAmounts(50m, 0m);
+            var r3 = SpiReceivedMsg.CreateFromSystemA("r3" + type, type, null, "<a/>", errorCode: null);
+            r3.SetAmounts(200m, 25m);
+            // pibr.002 with an amount that must be excluded.
+            var echo = SpiReceivedMsg.CreateFromSystemA("echo" + type, "pibr.002", null, "<a/>", errorCode: null);
+            echo.SetAmounts(999m, 0m);
+            ctx.SpiReceivedMsgs.AddRange(r1, r2, r3, echo);
+
+            // Sent — day1: success 300; day2: failed 40+10 withdrawal.
+            var s1 = SpiSentMsg.Create("s1" + type, type);
+            s1.UpdateFromSystemA("MSGA1", "<a/>", null);
+            s1.SetAmounts(300m, 0m);
+            var s2 = SpiSentMsg.Create("s2" + type, type);
+            s2.UpdateFromSystemA("MSGA2", "<a/>", "EA1"); // failed
+            s2.SetAmounts(40m, 10m);
+            ctx.SpiSentMsgs.AddRange(s1, s2);
+
+            await ctx.SaveChangesAsync();
+
+            foreach (var (key, day) in new[] { ("r1", day1), ("r2", day1), ("r3", day2), ("echo", day1) })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1}", day, key + type);
+            foreach (var (key, day) in new[] { ("s1", day1), ("s2", day2) })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdempotentId = {1}", day, key + type);
+        }
+
+        var series = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetAmountTimeSeriesAsync(
+                from: new DateTime(2026, 6, 9, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2026, 6, 12, 0, 0, 0, DateTimeKind.Utc));
+
+        series.Points.Should().HaveCount(2);
+        series.Points[0].Day.Should().Be(new DateTime(2026, 6, 10));
+        series.Points[0].ReceivedSuccess.Should().Be(100m); // pibr.002 999 excluded
+        series.Points[0].ReceivedFailed.Should().Be(50m);
+        series.Points[0].SentSuccess.Should().Be(300m);
+        series.Points[0].SentFailed.Should().Be(0m);
+        series.Points[1].Day.Should().Be(new DateTime(2026, 6, 11));
+        series.Points[1].ReceivedSuccess.Should().Be(225m); // 200 transfer + 25 withdrawal
+        series.Points[1].ReceivedFailed.Should().Be(0m);
+        series.Points[1].SentSuccess.Should().Be(0m);
+        series.Points[1].SentFailed.Should().Be(50m); // 40 + 10
+    }
+
     private static SpiSentMsg SentPair(string type, string key, bool correlated)
     {
         var msg = SpiSentMsg.Create(key + type, type);

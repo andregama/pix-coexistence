@@ -79,6 +79,22 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
             : 0m;
     }
 
+    public (decimal Transfer, decimal Withdrawal) ExtractAmounts(string xml, string msgType)
+    {
+        // Transfer portion: the message's settlement amount (pacs.008 IntrBkSttlmAmt, pacs.004
+        // RtrdIntrBkSttlmAmt, or the instructed-amount fallback) — reuses ExtractAmount's selectors.
+        var transfer = ExtractAmount(xml);
+
+        // Withdrawal portion (Pix Saque e Troco): TODO — the Bacen Pix Saque/Troco pacs.008 carries the
+        // saque amount in a dedicated structured element (candidate: CdtTrfTxInf structured amount /
+        // proprietary breakdown); the exact path is unconfirmed. Until it is wired in, withdrawal is 0
+        // and `transfer` above therefore carries the full settlement amount for Saque/Troco rows. Once
+        // the element is confirmed, extract it here and subtract it from `transfer` for those rows.
+        var withdrawal = 0m;
+
+        return (transfer, withdrawal);
+    }
+
     public string ExtractPayerId(string xml)
     {
         var (doc, ns) = Load(xml);

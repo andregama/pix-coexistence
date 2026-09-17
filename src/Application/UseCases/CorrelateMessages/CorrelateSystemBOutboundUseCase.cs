@@ -59,6 +59,8 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
         var msg = SpiSentMsg.Create(idempotentId, msgType);
         msg.UpdateFromSystemB(msgId, rawXml, null);
         msg.SetCorrelationSource(correlationSource);
+        var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(rawXml, msgType);
+        msg.SetAmounts(transferAmount, withdrawalAmount);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 

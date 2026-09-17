@@ -10,6 +10,10 @@ public sealed class SpiReceivedMsg
     public string? OriginalMsgIdempotentId { get; private set; }
     public string? SystemAErrorCode { get; private set; }
     public string? SystemBErrorCode { get; private set; }
+    /// <summary>Transfer/troco portion of the payment amount. Null when not a payment or not yet parsed.</summary>
+    public decimal? TransferAmount { get; private set; }
+    /// <summary>Pix Saque (withdrawal) portion of the payment amount. Null when not applicable.</summary>
+    public decimal? WithdrawalAmount { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
     /// <summary>Outbound-stream resource id assigned when the signed message is enqueued for System B to pull.</summary>
@@ -89,6 +93,13 @@ public sealed class SpiReceivedMsg
     {
         if (CorrelationSource is null && !string.IsNullOrWhiteSpace(source))
             CorrelationSource = source;
+    }
+
+    /// <summary>First-wins: records the transfer/withdrawal amounts parsed from the message XML.</summary>
+    public void SetAmounts(decimal? transfer, decimal? withdrawal)
+    {
+        TransferAmount ??= transfer;
+        WithdrawalAmount ??= withdrawal;
     }
 
     /// <summary>Records the outbound-stream resource id assigned when the signed XML is enqueued for System B.</summary>

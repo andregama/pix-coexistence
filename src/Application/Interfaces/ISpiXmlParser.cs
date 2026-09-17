@@ -4,6 +4,13 @@ public interface ISpiXmlParser
 {
     string ExtractMessageId(string xml);
     decimal ExtractAmount(string xml);
+
+    /// <summary>
+    /// Extracts the monetary breakdown of a payment message: the transfer/troco portion and the
+    /// Pix Saque (withdrawal) portion. For a plain transfer <c>Withdrawal</c> is 0 and
+    /// <c>Transfer</c> is the full settlement amount. Non-payment message types return (0, 0).
+    /// </summary>
+    (decimal Transfer, decimal Withdrawal) ExtractAmounts(string xml, string msgType);
     string ExtractPayerId(string xml);
     string ExtractPayeeId(string xml);
     DateTimeOffset ExtractTimestamp(string xml);

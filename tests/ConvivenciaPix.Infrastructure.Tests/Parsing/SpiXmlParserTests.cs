@@ -142,6 +142,26 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
+    public void ExtractAmounts_Transfer_FromSettlementAmount_WithdrawalZeroForNow()
+    {
+        // Transfer = the settlement amount; withdrawal is 0 until the Pix Saque/Troco element is wired in.
+        var xml = BuildPacs008(amount: "2500.75");
+        var (transfer, withdrawal) = _parser.ExtractAmounts(xml, "pacs.008");
+        transfer.Should().Be(2500.75m);
+        withdrawal.Should().Be(0m);
+    }
+
+    [Fact]
+    public void ExtractAmounts_Pacs004_UsesRtrdIntrBkSttlmAmt()
+    {
+        var xml = BuildSpiEnvelope("pacs.004", "1.5", "PmtRtr",
+            "<TxInf><RtrId>D1</RtrId><RtrdIntrBkSttlmAmt Ccy=\"BRL\">1234.56</RtrdIntrBkSttlmAmt></TxInf>");
+        var (transfer, withdrawal) = _parser.ExtractAmounts(xml, "pacs.004");
+        transfer.Should().Be(1234.56m);
+        withdrawal.Should().Be(0m);
+    }
+
+    [Fact]
     public void ExtractAmount_MissingElement_ReturnsZero()
     {
         var xml = "<Document><FIToFICstmrCdtTrf><CdtTrfTxInf></CdtTrfTxInf></FIToFICstmrCdtTrf></Document>";

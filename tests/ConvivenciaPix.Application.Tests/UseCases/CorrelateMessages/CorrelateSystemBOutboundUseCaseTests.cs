@@ -83,6 +83,23 @@ public sealed class CorrelateSystemBOutboundUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_SetsParsedAmounts_OnRow()
+    {
+        _xmlParserMock.Setup(p => p.ExtractAmounts(It.IsAny<string>(), "pacs.008"))
+            .Returns((123.45m, 6.78m));
+        SpiSentMsg? passed = null;
+        _sentRepoMock.Setup(r => r.UpsertSystemBAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiSentMsg, CancellationToken>((m, _) => passed = m)
+            .ReturnsAsync((SpiSentMsg m, CancellationToken _) => new UpsertOutcome<SpiSentMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(Envelope, AllowedTypes, CancellationToken.None);
+
+        passed.Should().NotBeNull();
+        passed!.TransferAmount.Should().Be(123.45m);
+        passed.WithdrawalAmount.Should().Be(6.78m);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Skips_WhenMsgTypeNotAllowed()
     {
         _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.999");

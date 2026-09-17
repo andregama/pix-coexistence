@@ -65,4 +65,20 @@ public sealed class AnalyticsController : ControllerBase
         var series = await _reader.GetErrorTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
         return Ok(series);
     }
+
+    /// <summary>
+    /// Daily evolution of summed amounts (transfer + withdrawal) over the optional
+    /// <paramref name="from"/>/<paramref name="to"/> (UTC) window, split into received/sent and
+    /// success/failed.
+    /// </summary>
+    [HttpGet("amounts-timeseries")]
+    [ProducesResponseType(typeof(AmountTimeSeriesDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<AmountTimeSeriesDto>> GetAmountTimeSeries(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var series = await _reader.GetAmountTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
+        return Ok(series);
+    }
 }

@@ -29,4 +29,12 @@ public interface ICoexistenceAnalyticsReader
     /// </summary>
     Task<ErrorTimeSeriesDto> GetErrorTimeSeriesAsync(
         DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Daily evolution of summed amounts (transfer + withdrawal) over the optional
+    /// [<paramref name="from"/>, <paramref name="to"/>] window (UTC), split into received vs sent and
+    /// success vs failed. Days with no amounts produce no point.
+    /// </summary>
+    Task<AmountTimeSeriesDto> GetAmountTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
 }

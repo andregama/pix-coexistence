@@ -71,6 +71,8 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         var receivedA = SpiReceivedMsg.CreateFromSystemA(
             idempotentId, msgType, msgId, mapped.XmlMsg, mapped.Problem, originalId);
         receivedA.SetCorrelationSource(correlationSource);
+        var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(mapped.XmlMsg, msgType);
+        receivedA.SetAmounts(transferAmount, withdrawalAmount);
         var (_, insertedReceived) = await _receivedMsgRepo.UpsertSystemAAsync(receivedA, ct);
         if (insertedReceived)
             _metrics.RecordCorrelationSource(correlationSource);

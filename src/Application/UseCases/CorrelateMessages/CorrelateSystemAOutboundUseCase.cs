@@ -58,6 +58,8 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
         var msg = SpiSentMsg.Create(idempotentId, msgType);
         msg.UpdateFromSystemA(mapped.MessageId, mapped.XmlMsg, mapped.Problem);
         msg.SetCorrelationSource(correlationSource);
+        var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(mapped.XmlMsg, msgType);
+        msg.SetAmounts(transferAmount, withdrawalAmount);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 

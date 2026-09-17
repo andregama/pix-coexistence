@@ -290,6 +290,59 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
         return new ErrorTimeSeriesDto(from, to, points);
     }
 
+    public async Task<AmountTimeSeriesDto> GetAmountTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
+    {
+        // Daily buckets of summed value (TransferAmount + WithdrawalAmount, nulls as 0), split success
+        // vs failed. Failed = the row carries any error code. Received and sent are summed separately
+        // then merged by day index. Same day-index bucketing as the propagation/error trends.
+        var epoch = DateTime.UnixEpoch;
+
+        var recvRaw = await FilterReceived(_db.SpiReceivedMsgs.AsNoTracking(), from, to)
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                Success = g.Sum(x => x.SystemAErrorCode == null && x.SystemBErrorCode == null
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                Failed = g.Sum(x => x.SystemAErrorCode != null || x.SystemBErrorCode != null
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+            })
+            .ToListAsync(cancellationToken);
+
+        var sentRaw = await FilterSent(_db.SpiSentMsgs.AsNoTracking(), from, to)
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                Success = g.Sum(x => x.SystemAErrorCode == null && x.SystemBErrorCode == null
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                Failed = g.Sum(x => x.SystemAErrorCode != null || x.SystemBErrorCode != null
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+            })
+            .ToListAsync(cancellationToken);
+
+        var recvByDay = recvRaw.ToDictionary(r => r.DayIndex);
+        var sentByDay = sentRaw.ToDictionary(r => r.DayIndex);
+
+        var points = recvByDay.Keys.Union(sentByDay.Keys)
+            .OrderBy(dayIndex => dayIndex)
+            .Select(dayIndex =>
+            {
+                recvByDay.TryGetValue(dayIndex, out var r);
+                sentByDay.TryGetValue(dayIndex, out var s);
+                return new AmountPointDto(
+                    Day: epoch.AddDays(dayIndex),
+                    ReceivedSuccess: r?.Success ?? 0m,
+                    ReceivedFailed: r?.Failed ?? 0m,
+                    SentSuccess: s?.Success ?? 0m,
+                    SentFailed: s?.Failed ?? 0m);
+            })
+            .ToList();
+
+        return new AmountTimeSeriesDto(from, to, points);
+    }
+
     // pibr.002 (proxy-synthesised Echo reply) is excluded from all counts; date bounds apply to CreatedAt.
     private static IQueryable<SpiReceivedMsg> FilterReceived(IQueryable<SpiReceivedMsg> q, DateTime? from, DateTime? to)
     {
