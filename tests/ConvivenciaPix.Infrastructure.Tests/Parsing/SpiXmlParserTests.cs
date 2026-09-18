@@ -14,9 +14,22 @@ public sealed class SpiXmlParserTests
         string amount = "1500.00",
         string payerId = "PAYER-BIC",
         string payeeId = "PAYEE-BIC",
-        string? timestamp = null)
+        string? timestamp = null,
+        string? withdrawalAmount = null)
     {
         timestamp ??= DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        // Pix Saque/Troco carries the withdrawal in RmtInf/Strd/RfrdDocAmt/AdjstmntAmtAndRsn/Amt.
+        var rmtInf = withdrawalAmount is null ? "" : $"""
+                  <RmtInf>
+                    <Strd>
+                      <RfrdDocAmt>
+                        <AdjstmntAmtAndRsn>
+                          <Amt Ccy="BRL">{withdrawalAmount}</Amt>
+                        </AdjstmntAmtAndRsn>
+                      </RfrdDocAmt>
+                    </Strd>
+                  </RmtInf>
+        """;
         return $"""
             <Document xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
               <head:AppHdr>
@@ -34,7 +47,7 @@ public sealed class SpiXmlParserTests
                   </Dbtr>
                   <Cdtr>
                     <Nm>{payeeId}</Nm>
-                  </Cdtr>
+                  </Cdtr>{rmtInf}
                 </CdtTrfTxInf>
               </FIToFICstmrCdtTrf>
             </Document>
@@ -142,13 +155,24 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
-    public void ExtractAmounts_Transfer_FromSettlementAmount_WithdrawalZeroForNow()
+    public void ExtractAmounts_PlainTransfer_WithdrawalZero_TransferIsFullAmount()
     {
-        // Transfer = the settlement amount; withdrawal is 0 until the Pix Saque/Troco element is wired in.
+        // No Pix Saque/Troco remittance → withdrawal 0, transfer = full settlement amount.
         var xml = BuildPacs008(amount: "2500.75");
         var (transfer, withdrawal) = _parser.ExtractAmounts(xml, "pacs.008");
         transfer.Should().Be(2500.75m);
         withdrawal.Should().Be(0m);
+    }
+
+    [Fact]
+    public void ExtractAmounts_SaqueTroco_SplitsWithdrawalFromTransfer()
+    {
+        // Pix Troco: IntrBkSttlmAmt 2500.75 total = transfer/troco portion + saque 500.25.
+        // Withdrawal comes from RmtInf/Strd/RfrdDocAmt/AdjstmntAmtAndRsn/Amt; transfer is the remainder.
+        var xml = BuildPacs008(amount: "2500.75", withdrawalAmount: "500.25");
+        var (transfer, withdrawal) = _parser.ExtractAmounts(xml, "pacs.008");
+        withdrawal.Should().Be(500.25m);
+        transfer.Should().Be(2000.50m);
     }
 
     [Fact]

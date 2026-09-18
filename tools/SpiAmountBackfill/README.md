@@ -34,6 +34,7 @@ dotnet run --project tools/SpiAmountBackfill \
   -- --ConnectionStrings:SqlServer="Server=...;Database=DB_COEXISTENCE;..." --Backfill:BatchSize=1000
 ```
 
-> Note: until the Pix Saque/Troco withdrawal-amount XML element is confirmed in
-> `SpiXmlParser.ExtractAmounts`, `WithdrawalAmount` is backfilled as `0` and `TransferAmount`
-> carries the full settlement amount. Re-run this tool after that element is wired in.
+> Note: `SpiXmlParser.ExtractAmounts` splits Pix Saque/Troco messages — `WithdrawalAmount` is
+> read from `RmtInf/Strd/RfrdDocAmt/AdjstmntAmtAndRsn/Amt` and `TransferAmount` is the settlement
+> amount minus that withdrawal (a plain transfer has withdrawal `0`). Re-run this tool to update
+> rows that were backfilled before this split was in place.

@@ -70,30 +70,37 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
         var raw = SelectText(doc, ns,
             "//*[local-name()='IntrBkSttlmAmt']",
             "//*[local-name()='RtrdIntrBkSttlmAmt']",
-            "//*[local-name()='InstdAmt']")
-            ?? "0";
+            "//*[local-name()='InstdAmt']");
 
-        return decimal.TryParse(raw, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out var amount)
-            ? amount
-            : 0m;
+        return ParseDecimal(raw);
     }
 
     public (decimal Transfer, decimal Withdrawal) ExtractAmounts(string xml, string msgType)
     {
-        // Transfer portion: the message's settlement amount (pacs.008 IntrBkSttlmAmt, pacs.004
-        // RtrdIntrBkSttlmAmt, or the instructed-amount fallback) — reuses ExtractAmount's selectors.
-        var transfer = ExtractAmount(xml);
+        // IntrBkSttlmAmt (pacs.008) / RtrdIntrBkSttlmAmt (pacs.004) is the full settled amount — for a
+        // Pix Saque/Troco it is the sum of the transfer/troco portion and the saque (withdrawal) portion.
+        var total = ExtractAmount(xml);
 
-        // Withdrawal portion (Pix Saque e Troco): TODO — the Bacen Pix Saque/Troco pacs.008 carries the
-        // saque amount in a dedicated structured element (candidate: CdtTrfTxInf structured amount /
-        // proprietary breakdown); the exact path is unconfirmed. Until it is wired in, withdrawal is 0
-        // and `transfer` above therefore carries the full settlement amount for Saque/Troco rows. Once
-        // the element is confirmed, extract it here and subtract it from `transfer` for those rows.
-        var withdrawal = 0m;
+        // Pix Saque e Troco carries the withdrawal (valor do saque) as a structured remittance
+        // adjustment amount. Path (Bacen Manual de Padrões de Iniciação / ISO 20022 RemittanceAmount2 →
+        // DocumentAdjustment1): CdtTrfTxInf/RmtInf/Strd/RfrdDocAmt/AdjstmntAmtAndRsn/Amt. Absent → 0.
+        var (doc, ns) = Load(xml);
+        var withdrawal = ParseDecimal(SelectText(doc, ns,
+            "//*[local-name()='CdtTrfTxInf']/*[local-name()='RmtInf']/*[local-name()='Strd']" +
+            "/*[local-name()='RfrdDocAmt']/*[local-name()='AdjstmntAmtAndRsn']/*[local-name()='Amt']"));
+
+        // Transfer/troco portion is the remainder once the saque is removed. Clamp at 0 so malformed
+        // data (withdrawal > total) can never produce a negative transfer.
+        var transfer = Math.Max(0m, total - withdrawal);
 
         return (transfer, withdrawal);
     }
+
+    private static decimal ParseDecimal(string? raw) =>
+        decimal.TryParse(raw, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var amount)
+            ? amount
+            : 0m;
 
     public string ExtractPayerId(string xml)
     {
