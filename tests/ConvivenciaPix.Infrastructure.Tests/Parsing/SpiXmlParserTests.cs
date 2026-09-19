@@ -176,6 +176,29 @@ public sealed class SpiXmlParserTests
     }
 
     [Fact]
+    public void ExtractTransactionStatus_ReturnsTxSts()
+    {
+        var xml = BuildSpiEnvelope("pacs.002", "1.17", "FIToFIPmtStsRpt",
+            "<TxInfAndSts><OrgnlEndToEndId>E2E-1</OrgnlEndToEndId><TxSts>ACSP</TxSts></TxInfAndSts>");
+        _parser.ExtractTransactionStatus(xml).Should().Be("ACSP");
+    }
+
+    [Fact]
+    public void ExtractTransactionStatus_Rejected_ReturnsRJCT()
+    {
+        var xml = BuildSpiEnvelope("pacs.002", "1.17", "FIToFIPmtStsRpt",
+            "<TxInfAndSts><OrgnlEndToEndId>E2E-2</OrgnlEndToEndId><TxSts>RJCT</TxSts></TxInfAndSts>");
+        _parser.ExtractTransactionStatus(xml).Should().Be("RJCT");
+    }
+
+    [Fact]
+    public void ExtractTransactionStatus_Absent_ReturnsNull()
+    {
+        var xml = BuildPacs008(amount: "10.00");
+        _parser.ExtractTransactionStatus(xml).Should().BeNull();
+    }
+
+    [Fact]
     public void ExtractAmounts_Pacs004_UsesRtrdIntrBkSttlmAmt()
     {
         var xml = BuildSpiEnvelope("pacs.004", "1.5", "PmtRtr",

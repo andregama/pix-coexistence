@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Domain.Entities;
 using ConvivenciaPix.Infrastructure.Analytics;
 using ConvivenciaPix.Infrastructure.Tests.Fixtures;
@@ -314,6 +315,57 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         series.Points[1].ReceivedFailed.Should().Be(0m);
         series.Points[1].SentSuccess.Should().Be(0m);
         series.Points[1].SentFailed.Should().Be(50m); // 40 + 10
+    }
+
+    [Fact]
+    public async Task AmountTimeSeries_ReceivedCredit_SuccessOnlyWhenAckAcceptedAndInboundNotRejected()
+    {
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var day = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc);
+
+        // Credit A: outbound ack ACCC + inbound pacs.002 no error -> success (100).
+        // Credit B: outbound ack ACCC + inbound pacs.002 rejected  -> failed (50).
+        // Credit C: inbound pacs.002 ok but NO accepted outbound ack -> failed (25).
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            foreach (var (key, amount) in new[] { ("A", 100m), ("B", 50m), ("C", 25m) })
+            {
+                var credit = SpiReceivedMsg.CreateFromSystemA($"E2E-{key}-{tag}", "pacs.008", null, "<a/>", errorCode: null);
+                credit.SetAmounts(amount, 0m);
+                ctx.SpiReceivedMsgs.Add(credit);
+            }
+            // Inbound pacs.002 rows (Bacen replies): A/C no error, B rejected.
+            var inA = SpiReceivedMsg.CreateFromSystemA($"E2E-A-{tag}", "pacs.002", null, "<p/>", errorCode: null);
+            inA.SetTxStatus("ACSP");
+            var inB = SpiReceivedMsg.CreateFromSystemA($"E2E-B-{tag}", "pacs.002", null, "<p/>", errorCode: SpiErrorCodes.RejectedTransfer);
+            inB.SetTxStatus("RJCT");
+            var inC = SpiReceivedMsg.CreateFromSystemA($"E2E-C-{tag}", "pacs.002", null, "<p/>", errorCode: null);
+            inC.SetTxStatus("ACSP");
+            ctx.SpiReceivedMsgs.AddRange(inA, inB, inC);
+            // Outbound pacs.002 acks in SpiSentMsg: A/B accepted (ACCC), C absent.
+            foreach (var key in new[] { "A", "B" })
+            {
+                var ack = SpiSentMsg.Create($"E2E-{key}-{tag}", "pacs.002");
+                ack.UpdateFromSystemA($"MSGA-{key}", "<a/>", null);
+                ack.SetTxStatus("ACCC");
+                ctx.SpiSentMsgs.Add(ack);
+            }
+            await ctx.SaveChangesAsync();
+
+            foreach (var key in new[] { "A", "B", "C" })
+                await ctx.Database.ExecuteSqlRawAsync(
+                    "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId = {1} AND MsgType = 'pacs.008'",
+                    day, $"E2E-{key}-{tag}");
+        }
+
+        var series = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetAmountTimeSeriesAsync(
+                from: new DateTime(2026, 7, 9, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2026, 7, 11, 0, 0, 0, DateTimeKind.Utc));
+
+        var point = series.Points.Single(p => p.Day == new DateTime(2026, 7, 10));
+        point.ReceivedSuccess.Should().Be(100m);   // only credit A
+        point.ReceivedFailed.Should().Be(75m);     // B (inbound rejected) + C (no accepted ack)
     }
 
     private static SpiSentMsg SentPair(string type, string key, bool correlated)

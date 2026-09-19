@@ -26,6 +26,7 @@ public sealed class SpiReceivedMsgRepository : ISpiReceivedMsgRepository
                 .SetProperty(x => x.CorrelationSource, x => x.CorrelationSource ?? msg.CorrelationSource)
                 .SetProperty(x => x.TransferAmount, x => x.TransferAmount ?? msg.TransferAmount)
                 .SetProperty(x => x.WithdrawalAmount, x => x.WithdrawalAmount ?? msg.WithdrawalAmount)
+                .SetProperty(x => x.TxStatus, x => x.TxStatus ?? msg.TxStatus)
                 .SetProperty(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken),
             cancellationToken);
 
@@ -45,11 +46,12 @@ public sealed class SpiReceivedMsgRepository : ISpiReceivedMsgRepository
     {
         for (var attempt = 1; ; attempt++)
         {
-            var rows = await update(_db.SpiReceivedMsgs.Where(x => x.IdempotentId == msg.IdempotentId));
+            var rows = await update(_db.SpiReceivedMsgs
+                .Where(x => x.IdempotentId == msg.IdempotentId && x.MsgType == msg.MsgType));
             if (rows > 0)
             {
                 var merged = await _db.SpiReceivedMsgs.AsNoTracking()
-                    .FirstAsync(x => x.IdempotentId == msg.IdempotentId, ct);
+                    .FirstAsync(x => x.IdempotentId == msg.IdempotentId && x.MsgType == msg.MsgType, ct);
                 return new UpsertOutcome<SpiReceivedMsg>(merged, Inserted: false);
             }
 

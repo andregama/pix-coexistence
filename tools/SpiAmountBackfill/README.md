@@ -1,22 +1,31 @@
 # SpiAmountBackfill
 
-One-off tool that populates the `TransferAmount` / `WithdrawalAmount` columns on existing
-`SpiSentMsg` and `SpiReceivedMsg` rows by re-parsing each row's stored message XML with the
-same `ISpiXmlParser` the correlate worker uses.
+One-off tool that repairs the amount / transaction-status columns on the coexistence message tables.
 
-It is **idempotent and re-runnable**: it only touches rows where `TransferAmount IS NULL` and
-some XML (`XmlMsgSystemA` or `XmlMsgSystemB`) is present, processing them in cursor-paged
-batches. Rows whose XML cannot be parsed are logged and left untouched.
+Three passes, all idempotent and re-runnable:
+
+1. **Sent amounts** — reparses each `SpiSentMsg` row's own XML into `TransferAmount` / `WithdrawalAmount`
+   (outbound rows are never overwritten, so their stored XML is authoritative).
+2. **Received reconstruction** — reads the original messages from **`DB_SYSTEMA.dbo.SpiRecepApiBacen`** and:
+   - restores each `(EndToEndId, 'pacs.008')` row's `XmlMsgSystemA` + amounts (an inbound pacs.002 had
+     overwritten the credit body in `DB_COEXISTENCE`, so it survives only in System A's table);
+   - inserts the **separate** `(EndToEndId, 'pacs.002')` response row with its `TxStatus` and, when
+     `TxSts=RJCT`, a `REJECTED_TRANSFER` marker on `SystemAErrorCode`.
+3. **Sent TxStatus** — reads outbound pacs.002 acks from **`DB_SYSTEMA.dbo.SpiEnvioApiBacen`** and fills
+   `SpiSentMsg.TxStatus` (first-wins), stamping the rejected marker on `SystemAErrorCode` for RJCT.
+
+Passes 2–3 need System A's database and are **skipped with a warning** when `ConnectionStrings:SystemA`
+is unset.
 
 ## Run
 
-Apply the schema first (adds the columns) if not already done:
+Apply the schema first (composite key + amount/status columns):
 
 ```bash
 make migrate
 ```
 
-Then run the backfill against the same database:
+Then run the backfill:
 
 ```bash
 dotnet run --project tools/SpiAmountBackfill
@@ -24,17 +33,14 @@ dotnet run --project tools/SpiAmountBackfill
 
 Configuration (`appsettings.json`, environment variables, or command line):
 
-- `ConnectionStrings:SqlServer` — target database (defaults to the local dev container).
-- `Backfill:BatchSize` — rows per batch (default 500).
+- `ConnectionStrings:SqlServer` — the coexistence database (`DB_COEXISTENCE`), written to.
+- `ConnectionStrings:SystemA` — System A's database (`DB_SYSTEMA`), read-only source for passes 2–3.
+- `Backfill:BatchSize` — rows per batch for the sent-amount pass (default 500).
 
-Example overriding the connection string and batch size:
+Example overriding connection strings:
 
 ```bash
 dotnet run --project tools/SpiAmountBackfill \
-  -- --ConnectionStrings:SqlServer="Server=...;Database=DB_COEXISTENCE;..." --Backfill:BatchSize=1000
+  -- --ConnectionStrings:SqlServer="Server=...;Database=DB_COEXISTENCE;..." \
+     --ConnectionStrings:SystemA="Server=...;Database=DB_SYSTEMA;..."
 ```
-
-> Note: `SpiXmlParser.ExtractAmounts` splits Pix Saque/Troco messages — `WithdrawalAmount` is
-> read from `RmtInf/Strd/RfrdDocAmt/AdjstmntAmtAndRsn/Amt` and `TransferAmount` is the settlement
-> amount minus that withdrawal (a plain transfer has withdrawal `0`). Re-run this tool to update
-> rows that were backfilled before this split was in place.

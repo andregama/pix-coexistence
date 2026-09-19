@@ -31,6 +31,7 @@ public sealed class SpiSentMsgRepository : ISpiSentMsgRepository
                 .SetProperty(x => x.CorrelationSource, x => x.CorrelationSource ?? msg.CorrelationSource)
                 .SetProperty(x => x.TransferAmount, x => x.TransferAmount ?? msg.TransferAmount)
                 .SetProperty(x => x.WithdrawalAmount, x => x.WithdrawalAmount ?? msg.WithdrawalAmount)
+                .SetProperty(x => x.TxStatus, x => x.TxStatus ?? msg.TxStatus)
                 .SetProperty(x => x.UpdatedAt, msg.UpdatedAt), cancellationToken),
             cancellationToken);
 

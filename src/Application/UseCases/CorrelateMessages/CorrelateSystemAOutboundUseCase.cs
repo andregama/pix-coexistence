@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.Mappers;
@@ -55,11 +56,16 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
         // Atomic first-arrival upsert: whichever of System A/B outbound arrives first creates the
         // shared row (keyed by IdempotentId); the other side updates only its own columns. Safe under
         // the concurrent A/B race (no duplicate-key, no lost update).
+        // A rejected pacs.002 (TxSts=RJCT) is stamped with the rejected-transfer marker on SystemAErrorCode.
+        var txStatus = _xmlParser.ExtractTransactionStatus(mapped.XmlMsg);
+        var errorCode = txStatus == TxStatuses.Rejected ? SpiErrorCodes.RejectedTransfer : mapped.Problem;
+
         var msg = SpiSentMsg.Create(idempotentId, msgType);
-        msg.UpdateFromSystemA(mapped.MessageId, mapped.XmlMsg, mapped.Problem);
+        msg.UpdateFromSystemA(mapped.MessageId, mapped.XmlMsg, errorCode);
         msg.SetCorrelationSource(correlationSource);
         var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(mapped.XmlMsg, msgType);
         msg.SetAmounts(transferAmount, withdrawalAmount);
+        msg.SetTxStatus(txStatus);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 

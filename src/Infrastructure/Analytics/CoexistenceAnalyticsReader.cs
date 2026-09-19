@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Domain.Entities;
@@ -16,6 +17,8 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
 {
     private const int RecentErrorLimit = 50;
     private const string UnknownLabel = "Unknown";
+    private const string Pacs008Type = "pacs.008";
+    private const string Pacs002Type = "pacs.002";
 
     /// <summary>
     /// Proxy-synthesised SPI Echo reply (pibr.002). It has no System A ↔ System B coexistence flow,
@@ -294,11 +297,45 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
         DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
     {
         // Daily buckets of summed value (TransferAmount + WithdrawalAmount, nulls as 0), split success
-        // vs failed. Failed = the row carries any error code. Received and sent are summed separately
-        // then merged by day index. Same day-index bucketing as the propagation/error trends.
+        // vs failed, received vs sent, merged by UTC day.
         var epoch = DateTime.UnixEpoch;
+        // A List (not an array) so .Contains binds to Enumerable/List.Contains — EF translates it to a
+        // SQL IN clause; an array's .Contains can bind to the ReadOnlySpan extension, which EF cannot translate.
+        var accepted = TxStatuses.Accepted.ToList();
+        var rejectedMarker = SpiErrorCodes.RejectedTransfer;
+        var sentRows = _db.SpiSentMsgs.AsNoTracking();
+        var receivedRows = _db.SpiReceivedMsgs.AsNoTracking();
 
-        var recvRaw = await FilterReceived(_db.SpiReceivedMsgs.AsNoTracking(), from, to)
+        // Received: a pacs.008 credit is successful only when System A's outbound pacs.002 was accepted
+        // (TxStatus in the accepted set) AND an inbound pacs.002 exists that is not rejected (the RJCT
+        // marker on SystemAErrorCode). Other amount-bearing rows (e.g. pacs.004 returns) keep the
+        // error-code rule. The two EXISTS flags are computed in SQL; rows are grouped by day in memory
+        // (the window is TTL-bounded, so per-row materialisation is cheap — mirrors BuildRecentErrors).
+        var recvMaterialized = await FilterReceived(receivedRows, from, to)
+            .Where(x => x.TransferAmount != null || x.WithdrawalAmount != null)
+            .Select(x => new
+            {
+                x.CreatedAt,
+                Amount = (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m),
+                Success = x.MsgType == Pacs008Type
+                    ? sentRows.Any(s => s.IdempotentId == x.IdempotentId && s.MsgType == Pacs002Type
+                          && accepted.Contains(s.TxStatus!))
+                      && receivedRows.Any(p => p.IdempotentId == x.IdempotentId && p.MsgType == Pacs002Type
+                          && p.SystemAErrorCode != rejectedMarker)
+                    : x.SystemAErrorCode == null && x.SystemBErrorCode == null,
+            })
+            .ToListAsync(cancellationToken);
+
+        var recvByDay = recvMaterialized
+            .GroupBy(r => DateTime.SpecifyKind(r.CreatedAt.Date, DateTimeKind.Utc))
+            .ToDictionary(g => g.Key, g => new
+            {
+                Success = g.Where(r => r.Success).Sum(r => r.Amount),
+                Failed = g.Where(r => !r.Success).Sum(r => r.Amount),
+            });
+
+        // Sent: unchanged — success = no error code on either side.
+        var sentRaw = await FilterSent(sentRows, from, to)
             .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
             .Select(g => new
             {
@@ -310,29 +347,16 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             })
             .ToListAsync(cancellationToken);
 
-        var sentRaw = await FilterSent(_db.SpiSentMsgs.AsNoTracking(), from, to)
-            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
-            .Select(g => new
-            {
-                DayIndex = g.Key,
-                Success = g.Sum(x => x.SystemAErrorCode == null && x.SystemBErrorCode == null
-                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
-                Failed = g.Sum(x => x.SystemAErrorCode != null || x.SystemBErrorCode != null
-                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
-            })
-            .ToListAsync(cancellationToken);
-
-        var recvByDay = recvRaw.ToDictionary(r => r.DayIndex);
-        var sentByDay = sentRaw.ToDictionary(r => r.DayIndex);
+        var sentByDay = sentRaw.ToDictionary(r => epoch.AddDays(r.DayIndex), r => new { r.Success, r.Failed });
 
         var points = recvByDay.Keys.Union(sentByDay.Keys)
-            .OrderBy(dayIndex => dayIndex)
-            .Select(dayIndex =>
+            .OrderBy(day => day)
+            .Select(day =>
             {
-                recvByDay.TryGetValue(dayIndex, out var r);
-                sentByDay.TryGetValue(dayIndex, out var s);
+                recvByDay.TryGetValue(day, out var r);
+                sentByDay.TryGetValue(day, out var s);
                 return new AmountPointDto(
-                    Day: epoch.AddDays(dayIndex),
+                    Day: day,
                     ReceivedSuccess: r?.Success ?? 0m,
                     ReceivedFailed: r?.Failed ?? 0m,
                     SentSuccess: s?.Success ?? 0m,

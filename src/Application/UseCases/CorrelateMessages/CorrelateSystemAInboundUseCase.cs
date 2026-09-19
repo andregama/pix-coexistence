@@ -1,3 +1,4 @@
+using ConvivenciaPix.Application.Common;
 using ConvivenciaPix.Application.DTOs;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Application.Mappers;
@@ -68,11 +69,17 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
 
         // Atomic per-side upsert: System A's CDC arrival and System B's propagation write the same
         // row concurrently, so create-or-update the A columns without racing on the insert.
+        // A rejected pacs.002 (TxSts=RJCT) is stamped with the rejected-transfer marker on SystemAErrorCode
+        // so analytics can detect rejections on the indexed error column (and surface them as errors).
+        var txStatus = _xmlParser.ExtractTransactionStatus(mapped.XmlMsg);
+        var errorCode = txStatus == TxStatuses.Rejected ? SpiErrorCodes.RejectedTransfer : mapped.Problem;
+
         var receivedA = SpiReceivedMsg.CreateFromSystemA(
-            idempotentId, msgType, msgId, mapped.XmlMsg, mapped.Problem, originalId);
+            idempotentId, msgType, msgId, mapped.XmlMsg, errorCode, originalId);
         receivedA.SetCorrelationSource(correlationSource);
         var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(mapped.XmlMsg, msgType);
         receivedA.SetAmounts(transferAmount, withdrawalAmount);
+        receivedA.SetTxStatus(txStatus);
         var (_, insertedReceived) = await _receivedMsgRepo.UpsertSystemAAsync(receivedA, ct);
         if (insertedReceived)
             _metrics.RecordCorrelationSource(correlationSource);

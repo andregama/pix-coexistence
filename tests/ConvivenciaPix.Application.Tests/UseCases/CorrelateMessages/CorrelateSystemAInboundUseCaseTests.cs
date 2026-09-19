@@ -475,4 +475,26 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         _publisherMock.Verify(p => p.PublishAsync(It.IsAny<string>(), It.IsAny<KafkaEnvelope>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_RejectedPacs002_StampsTxStatus_AndRejectedErrorMarker()
+    {
+        // A rejected inbound pacs.002 records TxStatus=RJCT and the rejected-transfer marker on the row.
+        _xmlParserMock.Setup(p => p.ExtractTransactionStatus(It.IsAny<string>())).Returns("RJCT");
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CompleteSentMsg());
+        _transformerMock.Setup(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns("<x/>");
+
+        SpiReceivedMsg? upserted = null;
+        _receivedRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiReceivedMsg, CancellationToken>((m, _) => upserted = m)
+            .ReturnsAsync((SpiReceivedMsg m, CancellationToken _) => new UpsertOutcome<SpiReceivedMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
+
+        upserted.Should().NotBeNull();
+        upserted!.TxStatus.Should().Be("RJCT");
+        upserted.SystemAErrorCode.Should().Be(ConvivenciaPix.Application.Common.SpiErrorCodes.RejectedTransfer);
+    }
 }

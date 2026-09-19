@@ -19,6 +19,12 @@ public interface ISpiXmlParser
     string ExtractMessageType(string xml);
 
     /// <summary>
+    /// Returns the transaction status (pacs.002 <c>TxInfAndSts/TxSts</c>, e.g. "ACCC", "ACSP", "RJCT"),
+    /// or null when the message carries no status element.
+    /// </summary>
+    string? ExtractTransactionStatus(string xml);
+
+    /// <summary>
     /// Returns the message-level idempotency key as defined in Catálogo de Serviços do SFN v5.12:
     /// pacs.008 → CdtTrfTxInf/PmtId/EndToEndId,
     /// pacs.002 → TxInfAndSts/OrgnlEndToEndId,

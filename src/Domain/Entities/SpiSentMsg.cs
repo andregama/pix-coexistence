@@ -15,6 +15,8 @@ public sealed class SpiSentMsg
     public decimal? TransferAmount { get; private set; }
     /// <summary>Pix Saque (withdrawal) portion of the payment amount. Null when not applicable.</summary>
     public decimal? WithdrawalAmount { get; private set; }
+    /// <summary>pacs.002 transaction status (TxSts, e.g. ACCC/ACSP/RJCT) from System A. Null when not a status message.</summary>
+    public string? TxStatus { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
     public DateTime CreatedAt { get; private set; }
@@ -77,5 +79,12 @@ public sealed class SpiSentMsg
     {
         TransferAmount ??= transfer;
         WithdrawalAmount ??= withdrawal;
+    }
+
+    /// <summary>First-wins: records the pacs.002 transaction status (TxSts) parsed from the message XML.</summary>
+    public void SetTxStatus(string? txStatus)
+    {
+        if (TxStatus is null && !string.IsNullOrWhiteSpace(txStatus))
+            TxStatus = txStatus;
     }
 }

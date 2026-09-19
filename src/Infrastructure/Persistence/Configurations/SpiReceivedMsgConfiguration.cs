@@ -9,7 +9,9 @@ public sealed class SpiReceivedMsgConfiguration : IEntityTypeConfiguration<SpiRe
     public void Configure(EntityTypeBuilder<SpiReceivedMsg> builder)
     {
         builder.ToTable("SpiReceivedMsg");
-        builder.HasKey(x => x.IdempotentId);
+        // Composite key: a single correlation id can carry a primary message (pacs.008 credit) and a
+        // later response (pacs.002) that shares its EndToEndId — they must be distinct rows, not one.
+        builder.HasKey(x => new { x.IdempotentId, x.MsgType });
 
         builder.Property(x => x.IdempotentId)
             .HasColumnType("VARCHAR(255)")
@@ -27,6 +29,7 @@ public sealed class SpiReceivedMsgConfiguration : IEntityTypeConfiguration<SpiRe
         builder.Property(x => x.SystemBErrorCode).HasColumnType("VARCHAR(MAX)");
         builder.Property(x => x.TransferAmount).HasColumnType("DECIMAL(18,2)");
         builder.Property(x => x.WithdrawalAmount).HasColumnType("DECIMAL(18,2)");
+        builder.Property(x => x.TxStatus).HasColumnType("VARCHAR(10)");
         builder.Property(x => x.CorrelationSource).HasColumnType("VARCHAR(20)");
         builder.Property(x => x.PiResourceId).HasColumnType("VARCHAR(255)");
         builder.Property(x => x.ConsumedAt).HasColumnType("DATETIME2");

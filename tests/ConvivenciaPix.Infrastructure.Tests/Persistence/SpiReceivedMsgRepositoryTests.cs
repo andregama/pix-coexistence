@@ -121,5 +121,35 @@ public sealed class SpiReceivedMsgRepositoryTests : IClassFixture<SqlServerFixtu
         row.IsComplete.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task Upsert_SameIdDifferentMsgType_ProducesTwoRows_NoOverwrite()
+    {
+        // A pacs.008 credit and a pacs.002 response can share an EndToEndId; under the composite key
+        // (IdempotentId, MsgType) they are distinct rows — the response must not clobber the credit.
+        var id = Uid();
+
+        var credit = SpiReceivedMsg.CreateFromSystemA(id, "pacs.008", "MSG-" + id, "<pacs008/>", errorCode: null);
+        credit.SetAmounts(123.45m, 0m);
+        (await CreateRepo().UpsertSystemAAsync(credit)).Inserted.Should().BeTrue();
+
+        var response = SpiReceivedMsg.CreateFromSystemA(id, "pacs.002", null, "<pacs002/>", errorCode: null);
+        response.SetTxStatus("ACSP");
+        (await CreateRepo().UpsertSystemAAsync(response)).Inserted.Should().BeTrue(); // separate row, not an update
+
+        await using var ctx = _fixture.CreateDbContext();
+        var rows = ctx.SpiReceivedMsgs
+            .Where(x => x.IdempotentId == id)
+            .OrderBy(x => x.MsgType)
+            .ToList();
+
+        rows.Should().HaveCount(2);
+        var creditRow = rows.Single(r => r.MsgType == "pacs.008");
+        creditRow.XmlMsgSystemA.Should().Be("<pacs008/>");   // credit body intact
+        creditRow.TransferAmount.Should().Be(123.45m);
+        var responseRow = rows.Single(r => r.MsgType == "pacs.002");
+        responseRow.XmlMsgSystemA.Should().Be("<pacs002/>");
+        responseRow.TxStatus.Should().Be("ACSP");
+    }
+
     private static string Uid() => Guid.NewGuid().ToString("N")[..16];
 }

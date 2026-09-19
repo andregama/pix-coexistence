@@ -102,6 +102,16 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
             ? amount
             : 0m;
 
+    public string? ExtractTransactionStatus(string xml)
+    {
+        var (doc, ns) = Load(xml);
+        // pacs.002 status: TxInfAndSts/TxSts (e.g. ACCC/ACSP/ACSC accepted, RJCT rejected). Group-level
+        // GrpSts is a fallback for messages that carry the status at the report header.
+        return SelectText(doc, ns,
+            "//*[local-name()='TxInfAndSts']/*[local-name()='TxSts']",
+            "//*[local-name()='TxSts']");
+    }
+
     public string ExtractPayerId(string xml)
     {
         var (doc, ns) = Load(xml);
