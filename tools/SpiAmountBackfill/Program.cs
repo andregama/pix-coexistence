@@ -113,7 +113,7 @@ static async Task<(int Restored, int Created)> ReconstructReceivedFromSystemAAsy
     await using var write = new SqlConnection(coexistenceCs);
     await write.OpenAsync(ct);
 
-    await foreach (var (xml, problem) in ReadSystemAMessagesAsync(systemACs, "SpiRecepApiBacen", logger, ct))
+    await foreach (var xml in ReadSystemAMessagesAsync(systemACs, "SpiRecepApiBacen", logger, ct))
     {
         string msgType, e2e;
         try
@@ -148,7 +148,8 @@ static async Task<(int Restored, int Created)> ReconstructReceivedFromSystemAAsy
         else if (msgType == Pacs002)
         {
             var status = parser.ExtractTransactionStatus(xml);
-            var err = status == TxStatuses.Rejected ? SpiErrorCodes.RejectedTransfer : problem;
+            // Errors are derived from the message XML: a rejected pacs.002 (TxSts=RJCT) gets the marker.
+            var err = status == TxStatuses.Rejected ? SpiErrorCodes.RejectedTransfer : null;
             // Create the response as its own row (it used to overwrite the credit).
             var affected = await ExecAsync(write, ct,
                 "UPDATE dbo.SpiReceivedMsg SET XmlMsgSystemA=@xml, SystemAErrorCode=@err, TxStatus=@status, UpdatedAt=SYSUTCDATETIME() "
@@ -180,7 +181,7 @@ static async Task<int> BackfillSentTxStatusFromSystemAAsync(
     await using var write = new SqlConnection(coexistenceCs);
     await write.OpenAsync(ct);
 
-    await foreach (var (xml, _) in ReadSystemAMessagesAsync(systemACs, "SpiEnvioApiBacen", logger, ct))
+    await foreach (var xml in ReadSystemAMessagesAsync(systemACs, "SpiEnvioApiBacen", logger, ct))
     {
         string msgType, e2e;
         try
@@ -211,21 +212,19 @@ static async Task<int> BackfillSentTxStatusFromSystemAAsync(
 }
 
 // --- Helpers -----------------------------------------------------------------------------------------
-static async IAsyncEnumerable<(string Xml, string? Problem)> ReadSystemAMessagesAsync(
+static async IAsyncEnumerable<string> ReadSystemAMessagesAsync(
     string systemACs, string table, ILogger logger,
     [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
 {
     await using var read = new SqlConnection(systemACs);
     await read.OpenAsync(ct);
     await using var cmd = read.CreateCommand();
-    cmd.CommandText = $"SELECT XmlMsg, Problem FROM dbo.{table}";
+    cmd.CommandText = $"SELECT XmlMsg FROM dbo.{table}";
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct))
     {
         if (reader.IsDBNull(0)) continue;
-        var xml = reader.GetString(0);
-        var problem = reader.IsDBNull(1) ? null : reader.GetString(1);
-        yield return (xml, problem);
+        yield return reader.GetString(0);
     }
 }
 
