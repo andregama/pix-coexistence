@@ -15,6 +15,7 @@ using Microsoft.Extensions.Logging;
 //     inbound pacs.002 overwrote the pacs.008 body in SpiReceivedMsg — the original credit survives
 //     only in DB_SYSTEMA.dbo.SpiRecepApiBacen. Reconstructs the split (E2E,'pacs.008') and
 //     (E2E,'pacs.002') rows and fills SpiSentMsg.TxStatus from DB_SYSTEMA.dbo.SpiEnvioApiBacen.
+//     Scoped to the EndToEndIds already in SpiReceivedMsg, so it reads only the relevant System A rows.
 // Idempotent and re-runnable. Run: dotnet run --project tools/SpiAmountBackfill
 
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
@@ -51,8 +52,19 @@ if (string.IsNullOrWhiteSpace(systemACs))
 }
 else
 {
-    (recvRestored, recvCreated) = await ReconstructReceivedFromSystemAAsync(systemACs, coexistenceCs, parser, logger, ct);
-    sentStatus = await BackfillSentTxStatusFromSystemAAsync(systemACs, coexistenceCs, parser, logger, ct);
+    // Only the transfers already in SpiReceivedMsg need reconstructing — scope the (much larger) System A
+    // read to those EndToEndIds instead of scanning every System A row.
+    var targetIds = await LoadReceivedTransferIdsAsync(coexistenceCs, ct);
+    if (targetIds.Count == 0)
+    {
+        logger.LogInformation("No pacs.008 transfers in SpiReceivedMsg — nothing to reconstruct from System A.");
+    }
+    else
+    {
+        logger.LogInformation("Reconstructing {Count} transfer(s) from System A.", targetIds.Count);
+        (recvRestored, recvCreated) = await ReconstructReceivedFromSystemAAsync(systemACs, coexistenceCs, targetIds, parser, logger, ct);
+        sentStatus = await BackfillSentTxStatusFromSystemAAsync(systemACs, coexistenceCs, targetIds, parser, logger, ct);
+    }
 }
 
 logger.LogInformation(
@@ -103,17 +115,19 @@ static async Task<int> BackfillSentAmountsAsync(
 
 // --- Received: rebuild pacs.008 + pacs.002 rows from DB_SYSTEMA.dbo.SpiRecepApiBacen (raw SQL) --------
 static async Task<(int Restored, int Created)> ReconstructReceivedFromSystemAAsync(
-    string systemACs, string coexistenceCs, ISpiXmlParser parser, ILogger logger, CancellationToken ct)
+    string systemACs, string coexistenceCs, IReadOnlyCollection<string> targetIds,
+    ISpiXmlParser parser, ILogger logger, CancellationToken ct)
 {
     const string Pacs008 = "pacs.008";
     const string Pacs002 = "pacs.002";
+    var targetSet = new HashSet<string>(targetIds, StringComparer.OrdinalIgnoreCase);
     var restored = 0;
     var created = 0;
 
     await using var write = new SqlConnection(coexistenceCs);
     await write.OpenAsync(ct);
 
-    await foreach (var xml in ReadSystemAMessagesAsync(systemACs, "SpiRecepApiBacen", logger, ct))
+    await foreach (var xml in ReadSystemAMessagesForIdsAsync(systemACs, "SpiRecepApiBacen", targetIds, ct))
     {
         string msgType, e2e;
         try
@@ -126,7 +140,7 @@ static async Task<(int Restored, int Created)> ReconstructReceivedFromSystemAAsy
             logger.LogWarning(ex, "SpiRecepApiBacen: skipping unparseable message.");
             continue;
         }
-        if (string.IsNullOrEmpty(e2e))
+        if (string.IsNullOrEmpty(e2e) || !targetSet.Contains(e2e))
             continue;
 
         if (msgType == Pacs008)
@@ -173,15 +187,17 @@ static async Task<(int Restored, int Created)> ReconstructReceivedFromSystemAAsy
 
 // --- Sent TxStatus: from DB_SYSTEMA.dbo.SpiEnvioApiBacen outbound pacs.002 (raw SQL) -----------------
 static async Task<int> BackfillSentTxStatusFromSystemAAsync(
-    string systemACs, string coexistenceCs, ISpiXmlParser parser, ILogger logger, CancellationToken ct)
+    string systemACs, string coexistenceCs, IReadOnlyCollection<string> targetIds,
+    ISpiXmlParser parser, ILogger logger, CancellationToken ct)
 {
     const string Pacs002 = "pacs.002";
+    var targetSet = new HashSet<string>(targetIds, StringComparer.OrdinalIgnoreCase);
     var updated = 0;
 
     await using var write = new SqlConnection(coexistenceCs);
     await write.OpenAsync(ct);
 
-    await foreach (var xml in ReadSystemAMessagesAsync(systemACs, "SpiEnvioApiBacen", logger, ct))
+    await foreach (var xml in ReadSystemAMessagesForIdsAsync(systemACs, "SpiEnvioApiBacen", targetIds, ct))
     {
         string msgType, e2e;
         try
@@ -191,7 +207,7 @@ static async Task<int> BackfillSentTxStatusFromSystemAAsync(
             e2e = parser.ExtractCorrelationKey(xml, msgType);
         }
         catch { continue; }
-        if (string.IsNullOrEmpty(e2e))
+        if (string.IsNullOrEmpty(e2e) || !targetSet.Contains(e2e))
             continue;
 
         var status = parser.ExtractTransactionStatus(xml);
@@ -212,20 +228,51 @@ static async Task<int> BackfillSentTxStatusFromSystemAAsync(
 }
 
 // --- Helpers -----------------------------------------------------------------------------------------
-static async IAsyncEnumerable<string> ReadSystemAMessagesAsync(
-    string systemACs, string table, ILogger logger,
+
+// The EndToEndIds of the transfers already in SpiReceivedMsg (pacs.008 rows) — the only ones to rebuild.
+static async Task<List<string>> LoadReceivedTransferIdsAsync(string coexistenceCs, CancellationToken ct)
+{
+    var ids = new List<string>();
+    await using var conn = new SqlConnection(coexistenceCs);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT DISTINCT IdempotentId FROM dbo.SpiReceivedMsg WHERE MsgType = 'pacs.008'";
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct))
+        ids.Add(reader.GetString(0));
+    return ids;
+}
+
+// Streams only the System A rows whose message references one of the target EndToEndIds, using a
+// temp table of ids joined by a tag-delimited LIKE (`>id<`). One pass over the source table — no
+// EndToEndId column exists to index on — but only matching rows come back to be parsed.
+static async IAsyncEnumerable<string> ReadSystemAMessagesForIdsAsync(
+    string systemACs, string table, IReadOnlyCollection<string> targetIds,
     [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
 {
     await using var read = new SqlConnection(systemACs);
     await read.OpenAsync(ct);
+
+    await using (var create = read.CreateCommand())
+    {
+        create.CommandText = "CREATE TABLE #TargetE2E (e2e NVARCHAR(255) COLLATE DATABASE_DEFAULT PRIMARY KEY)";
+        await create.ExecuteNonQueryAsync(ct);
+    }
+
+    var idTable = new System.Data.DataTable();
+    idTable.Columns.Add("e2e", typeof(string));
+    foreach (var id in targetIds)
+        idTable.Rows.Add(id);
+    using (var bulk = new SqlBulkCopy(read) { DestinationTableName = "#TargetE2E" })
+        await bulk.WriteToServerAsync(idTable, ct);
+
     await using var cmd = read.CreateCommand();
-    cmd.CommandText = $"SELECT XmlMsg FROM dbo.{table}";
+    cmd.CommandText = $"SELECT s.XmlMsg FROM dbo.{table} s "
+        + "WHERE s.XmlMsg IS NOT NULL "
+        + "AND EXISTS (SELECT 1 FROM #TargetE2E t WHERE s.XmlMsg LIKE '%>' + t.e2e + '<%')";
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct))
-    {
-        if (reader.IsDBNull(0)) continue;
         yield return reader.GetString(0);
-    }
 }
 
 static async Task<int> ExecAsync(SqlConnection conn, CancellationToken ct, string sql,
