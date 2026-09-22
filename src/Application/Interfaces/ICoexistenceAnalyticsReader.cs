@@ -37,4 +37,12 @@ public interface ICoexistenceAnalyticsReader
     /// </summary>
     Task<AmountTimeSeriesDto> GetAmountTimeSeriesAsync(
         DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Daily evolution of the transfer/refund (pacs.008 + pacs.004) transaction <em>count</em> over
+    /// the optional [<paramref name="from"/>, <paramref name="to"/>] window (UTC), split into received
+    /// vs sent and success vs failed. Days with no transfers/refunds produce no point.
+    /// </summary>
+    Task<CountTimeSeriesDto> GetCountTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default);
 }

@@ -81,4 +81,20 @@ public sealed class AnalyticsController : ControllerBase
         var series = await _reader.GetAmountTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
         return Ok(series);
     }
+
+    /// <summary>
+    /// Daily evolution of transfer/refund (pacs.008 + pacs.004) transaction counts over the optional
+    /// <paramref name="from"/>/<paramref name="to"/> (UTC) window, split into received/sent and
+    /// success/failed.
+    /// </summary>
+    [HttpGet("counts-timeseries")]
+    [ProducesResponseType(typeof(CountTimeSeriesDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<CountTimeSeriesDto>> GetCountTimeSeries(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var series = await _reader.GetCountTimeSeriesAsync(from?.ToUniversalTime(), to?.ToUniversalTime(), cancellationToken);
+        return Ok(series);
+    }
 }

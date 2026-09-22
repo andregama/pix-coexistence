@@ -368,6 +368,133 @@ public sealed class CoexistenceAnalyticsReaderTests : IClassFixture<SqlServerFix
         point.ReceivedFailed.Should().Be(75m);     // B (inbound rejected) + C (no accepted ack)
     }
 
+    [Fact]
+    public async Task CountTimeSeries_CountsTransfersAndRefunds_BySuccessFailed_Ordered()
+    {
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var day1 = new DateTime(2027, 3, 10, 10, 0, 0, DateTimeKind.Utc);
+        var day2 = new DateTime(2027, 3, 11, 10, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Received day1: a successful pacs.008 credit (ack chain), a successful pacs.004 refund,
+            // a failed pacs.004 refund, and a pacs.002 that must NOT be counted (not a transfer/refund).
+            var credit = SpiReceivedMsg.CreateFromSystemA($"E2E-{tag}", "pacs.008", null, "<a/>", errorCode: null);
+            credit.SetAmounts(100m, 0m);
+            var refundOk = SpiReceivedMsg.CreateFromSystemA($"R1-{tag}", "pacs.004", null, "<a/>", errorCode: null);
+            var refundFail = SpiReceivedMsg.CreateFromSystemA($"R2-{tag}", "pacs.004", null, "<a/>", errorCode: null);
+            refundFail.SetSystemBXml("<b/>", "EB1"); // failed (B error)
+            var status = SpiReceivedMsg.CreateFromSystemA($"E2E-{tag}", "pacs.002", null, "<p/>", errorCode: null);
+            status.SetTxStatus("ACSP");
+            ctx.SpiReceivedMsgs.AddRange(credit, refundOk, refundFail, status);
+
+            // Outbound pacs.002 ack accepted → makes the received credit successful (ack-based rule).
+            var ack = SpiSentMsg.Create($"E2E-{tag}", "pacs.002");
+            ack.UpdateFromSystemA($"MSGA-{tag}", "<a/>", null);
+            ack.SetTxStatus("ACCC");
+            ctx.SpiSentMsgs.Add(ack);
+
+            // Sent day2: a successful pacs.008, a failed pacs.004.
+            var sentOk = SpiSentMsg.Create($"S1-{tag}", "pacs.008");
+            sentOk.UpdateFromSystemA($"MSGA-S1-{tag}", "<a/>", null);
+            var sentFail = SpiSentMsg.Create($"S2-{tag}", "pacs.004");
+            sentFail.UpdateFromSystemA($"MSGA-S2-{tag}", "<a/>", "EA9"); // failed
+            ctx.SpiSentMsgs.AddRange(sentOk, sentFail);
+
+            await ctx.SaveChangesAsync();
+
+            // Place the counted rows on their days; the ack/status rows stay at "now" (only referenced
+            // by the EXISTS lookups, never counted themselves).
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0} WHERE IdempotentId IN ({1},{2},{3}) AND MsgType IN ('pacs.008','pacs.004')",
+                day1, $"E2E-{tag}", $"R1-{tag}", $"R2-{tag}");
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiSentMsg SET CreatedAt = {0} WHERE IdempotentId IN ({1},{2})",
+                day2, $"S1-{tag}", $"S2-{tag}");
+        }
+
+        var series = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetCountTimeSeriesAsync(
+                from: new DateTime(2027, 3, 9, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2027, 3, 12, 0, 0, 0, DateTimeKind.Utc));
+
+        var d1 = series.Points.Single(p => p.Day == new DateTime(2027, 3, 10));
+        d1.ReceivedSuccess.Should().Be(2); // credit + refundOk (pacs.002 excluded)
+        d1.ReceivedFailed.Should().Be(1);  // refundFail
+        d1.SentSuccess.Should().Be(0);
+        d1.SentFailed.Should().Be(0);
+
+        var d2 = series.Points.Single(p => p.Day == new DateTime(2027, 3, 11));
+        d2.SentSuccess.Should().Be(1);     // pacs.008 sentOk
+        d2.SentFailed.Should().Be(1);      // pacs.004 sentFail
+        d2.ReceivedSuccess.Should().Be(0);
+        d2.ReceivedFailed.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Summary_PerSystem_CountsAndAmounts_ByFacetAndMsgType()
+    {
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var day = new DateTime(2027, 5, 15, 10, 0, 0, DateTimeKind.Utc);
+
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            // Received: A-only transfer (100), A+B transfer (200, both facets), B-only refund (30).
+            var rA = SpiReceivedMsg.CreateFromSystemA($"rA-{tag}", "pacs.008", null, "<a/>", errorCode: null);
+            rA.SetAmounts(100m, 0m);
+            var rAB = SpiReceivedMsg.CreateFromSystemA($"rAB-{tag}", "pacs.008", null, "<a/>", errorCode: null);
+            rAB.SetSystemBXml("<b/>");
+            rAB.SetAmounts(200m, 0m);
+            var rB = SpiReceivedMsg.CreateFromSystemB($"rB-{tag}", "pacs.004", null, "<b/>", errorCode: null);
+            rB.SetAmounts(30m, 0m);
+            ctx.SpiReceivedMsgs.AddRange(rA, rAB, rB);
+
+            // Sent: A-only transfer (50), A+B refund (40, both facets).
+            var sA = SpiSentMsg.Create($"sA-{tag}", "pacs.008");
+            sA.UpdateFromSystemA($"MA-{tag}", "<a/>", null);
+            sA.SetAmounts(50m, 0m);
+            var sAB = SpiSentMsg.Create($"sAB-{tag}", "pacs.004");
+            sAB.UpdateFromSystemA($"MA2-{tag}", "<a/>", null);
+            sAB.UpdateFromSystemB($"MB2-{tag}", "<b/>", null);
+            sAB.SetAmounts(40m, 0m);
+            ctx.SpiSentMsgs.AddRange(sA, sAB);
+
+            await ctx.SaveChangesAsync();
+
+            // Force CreatedAt (and UpdatedAt, so the correlated-pair latency diff stays a small,
+            // non-overflowing gap) onto the isolating window day.
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiReceivedMsg SET CreatedAt = {0}, UpdatedAt = {0} WHERE IdempotentId IN ({1},{2},{3})",
+                day, $"rA-{tag}", $"rAB-{tag}", $"rB-{tag}");
+            await ctx.Database.ExecuteSqlRawAsync(
+                "UPDATE SpiSentMsg SET CreatedAt = {0}, UpdatedAt = {0} WHERE IdempotentId IN ({1},{2})",
+                day, $"sA-{tag}", $"sAB-{tag}");
+        }
+
+        var summary = await Reader(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .GetSummaryAsync(
+                from: new DateTime(2027, 5, 14, 0, 0, 0, DateTimeKind.Utc),
+                to: new DateTime(2027, 5, 16, 0, 0, 0, DateTimeKind.Utc));
+
+        var a = summary.PerSystem.SystemA;
+        a.TransfersReceivedCount.Should().Be(2);       // rA + rAB
+        a.TransfersReceivedAmount.Should().Be(300m);   // 100 + 200
+        a.RefundsReceivedCount.Should().Be(0);
+        a.TransfersSentCount.Should().Be(1);           // sA
+        a.TransfersSentAmount.Should().Be(50m);
+        a.RefundsSentCount.Should().Be(1);             // sAB
+        a.RefundsSentAmount.Should().Be(40m);
+
+        var b = summary.PerSystem.SystemB;
+        b.TransfersReceivedCount.Should().Be(1);       // rAB
+        b.TransfersReceivedAmount.Should().Be(200m);
+        b.RefundsReceivedCount.Should().Be(1);         // rB
+        b.RefundsReceivedAmount.Should().Be(30m);
+        b.TransfersSentCount.Should().Be(0);
+        b.RefundsSentCount.Should().Be(1);             // sAB
+        b.RefundsSentAmount.Should().Be(40m);
+    }
+
     private static SpiSentMsg SentPair(string type, string key, bool correlated)
     {
         var msg = SpiSentMsg.Create(key + type, type);

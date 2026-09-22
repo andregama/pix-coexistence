@@ -17,7 +17,8 @@ public sealed record CoexistenceSummaryDto(
     IReadOnlyList<OutboundMsgTypeBreakdownDto> OutboundByMsgType,
     ReplicationLatencyDto Latency,
     IReadOnlyList<LabelCountDto> DiscrepanciesByField,
-    IReadOnlyList<RecentErrorDto> RecentErrors);
+    IReadOnlyList<RecentErrorDto> RecentErrors,
+    PerSystemBreakdownDto PerSystem);
 
 /// <summary>The Received → Propagated → Consumed funnel for inbound (SPI→PSP) messages.</summary>
 public sealed record InboundFunnelDto(
@@ -76,3 +77,20 @@ public sealed record RecentErrorDto(
     string System,      // "A" or "B"
     string ErrorCode,
     DateTime At);
+
+/// <summary>
+/// Per-system scoreboards: numbers and amounts of transfers (pacs.008) and refunds (pacs.004),
+/// sent (SpiSentMsg) and received (SpiReceivedMsg), attributed to each system by which facet the
+/// row carries (System A = XmlMsgSystemA present, System B = XmlMsgSystemB present). Totals across
+/// all statuses, scoped to the summary's [From, To] window.
+/// </summary>
+public sealed record PerSystemBreakdownDto(
+    SystemFlowStatsDto SystemA,
+    SystemFlowStatsDto SystemB);
+
+/// <summary>One system's transfer/refund counts and summed amounts (transfer + withdrawal).</summary>
+public sealed record SystemFlowStatsDto(
+    long TransfersSentCount,     decimal TransfersSentAmount,
+    long TransfersReceivedCount, decimal TransfersReceivedAmount,
+    long RefundsSentCount,       decimal RefundsSentAmount,
+    long RefundsReceivedCount,   decimal RefundsReceivedAmount);

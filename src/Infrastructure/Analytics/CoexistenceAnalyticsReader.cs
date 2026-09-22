@@ -19,6 +19,7 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
     private const string UnknownLabel = "Unknown";
     private const string Pacs008Type = "pacs.008";
     private const string Pacs002Type = "pacs.002";
+    private const string Pacs004Type = "pacs.004";
 
     /// <summary>
     /// Proxy-synthesised SPI Echo reply (pibr.002). It has no System A ↔ System B coexistence flow,
@@ -142,6 +143,8 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
 
         var recentErrors = await BuildRecentErrorsAsync(received, sent, cancellationToken);
 
+        var perSystem = await BuildPerSystemAsync(received, sent, cancellationToken);
+
         return new CoexistenceSummaryDto(
             From: from,
             To: to,
@@ -154,7 +157,72 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             OutboundByMsgType: outboundByMsgType,
             Latency: latency,
             DiscrepanciesByField: discrepanciesByField,
-            RecentErrors: recentErrors);
+            RecentErrors: recentErrors,
+            PerSystem: perSystem);
+    }
+
+    /// <summary>
+    /// Per-system scoreboards: transfer (pacs.008) / refund (pacs.004) counts and summed amounts
+    /// (transfer + withdrawal), split sent vs received, attributed to a system by which facet the row
+    /// carries (XmlMsgSystemA / XmlMsgSystemB present). One grouped projection per table keeps this to
+    /// two round-trips. Totals across all statuses.
+    /// </summary>
+    private static async Task<PerSystemBreakdownDto> BuildPerSystemAsync(
+        IQueryable<SpiReceivedMsg> received, IQueryable<SpiSentMsg> sent, CancellationToken ct)
+    {
+        var recv = await received
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                // System A facet (XmlMsgSystemA present).
+                ATransferCount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs008Type ? 1L : 0L),
+                ATransferAmount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs008Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                ARefundCount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs004Type ? 1L : 0L),
+                ARefundAmount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs004Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                // System B facet (XmlMsgSystemB present).
+                BTransferCount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs008Type ? 1L : 0L),
+                BTransferAmount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs008Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                BRefundCount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs004Type ? 1L : 0L),
+                BRefundAmount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs004Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var snt = await sent
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                ATransferCount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs008Type ? 1L : 0L),
+                ATransferAmount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs008Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                ARefundCount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs004Type ? 1L : 0L),
+                ARefundAmount = g.Sum(x => x.XmlMsgSystemA != null && x.MsgType == Pacs004Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                BTransferCount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs008Type ? 1L : 0L),
+                BTransferAmount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs008Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+                BRefundCount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs004Type ? 1L : 0L),
+                BRefundAmount = g.Sum(x => x.XmlMsgSystemB != null && x.MsgType == Pacs004Type
+                    ? (x.TransferAmount ?? 0m) + (x.WithdrawalAmount ?? 0m) : 0m),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var systemA = new SystemFlowStatsDto(
+            TransfersSentCount: snt?.ATransferCount ?? 0, TransfersSentAmount: snt?.ATransferAmount ?? 0m,
+            TransfersReceivedCount: recv?.ATransferCount ?? 0, TransfersReceivedAmount: recv?.ATransferAmount ?? 0m,
+            RefundsSentCount: snt?.ARefundCount ?? 0, RefundsSentAmount: snt?.ARefundAmount ?? 0m,
+            RefundsReceivedCount: recv?.ARefundCount ?? 0, RefundsReceivedAmount: recv?.ARefundAmount ?? 0m);
+
+        var systemB = new SystemFlowStatsDto(
+            TransfersSentCount: snt?.BTransferCount ?? 0, TransfersSentAmount: snt?.BTransferAmount ?? 0m,
+            TransfersReceivedCount: recv?.BTransferCount ?? 0, TransfersReceivedAmount: recv?.BTransferAmount ?? 0m,
+            RefundsSentCount: snt?.BRefundCount ?? 0, RefundsSentAmount: snt?.BRefundAmount ?? 0m,
+            RefundsReceivedCount: recv?.BRefundCount ?? 0, RefundsReceivedAmount: recv?.BRefundAmount ?? 0m);
+
+        return new PerSystemBreakdownDto(systemA, systemB);
     }
 
     /// <summary>Computes count/avg/p50/p95/max over a set of millisecond durations (negatives clamped to 0).</summary>
@@ -365,6 +433,75 @@ public sealed class CoexistenceAnalyticsReader : ICoexistenceAnalyticsReader
             .ToList();
 
         return new AmountTimeSeriesDto(from, to, points);
+    }
+
+    public async Task<CountTimeSeriesDto> GetCountTimeSeriesAsync(
+        DateTime? from, DateTime? to, CancellationToken cancellationToken = default)
+    {
+        // Daily buckets of transfer/refund transaction COUNTS (pacs.008 + pacs.004), split success vs
+        // failed, received vs sent, merged by UTC day. Mirrors GetAmountTimeSeriesAsync but counts rows
+        // instead of summing amounts, and is scoped to transfers/refunds only.
+        var epoch = DateTime.UnixEpoch;
+        var accepted = TxStatuses.Accepted.ToList();
+        var rejectedMarker = SpiErrorCodes.RejectedTransfer;
+        var sentRows = _db.SpiSentMsgs.AsNoTracking();
+        var receivedRows = _db.SpiReceivedMsgs.AsNoTracking();
+
+        // Received: a pacs.008 credit is successful only when System A's outbound pacs.002 was accepted
+        // AND an inbound pacs.002 exists that is not rejected (same ack-based rule as the amount series).
+        // pacs.004 returns keep the plain error-code rule. Materialise then group by day in memory.
+        var recvMaterialized = await FilterReceived(receivedRows, from, to)
+            .Where(x => x.MsgType == Pacs008Type || x.MsgType == Pacs004Type)
+            .Select(x => new
+            {
+                x.CreatedAt,
+                Success = x.MsgType == Pacs008Type
+                    ? sentRows.Any(s => s.IdempotentId == x.IdempotentId && s.MsgType == Pacs002Type
+                          && accepted.Contains(s.TxStatus!))
+                      && receivedRows.Any(p => p.IdempotentId == x.IdempotentId && p.MsgType == Pacs002Type
+                          && p.SystemAErrorCode != rejectedMarker)
+                    : x.SystemAErrorCode == null && x.SystemBErrorCode == null,
+            })
+            .ToListAsync(cancellationToken);
+
+        var recvByDay = recvMaterialized
+            .GroupBy(r => DateTime.SpecifyKind(r.CreatedAt.Date, DateTimeKind.Utc))
+            .ToDictionary(g => g.Key, g => new
+            {
+                Success = g.LongCount(r => r.Success),
+                Failed = g.LongCount(r => !r.Success),
+            });
+
+        // Sent: success = no error code on either side.
+        var sentRaw = await FilterSent(sentRows, from, to)
+            .Where(x => x.MsgType == Pacs008Type || x.MsgType == Pacs004Type)
+            .GroupBy(x => EF.Functions.DateDiffDay(epoch, x.CreatedAt))
+            .Select(g => new
+            {
+                DayIndex = g.Key,
+                Success = g.Sum(x => x.SystemAErrorCode == null && x.SystemBErrorCode == null ? 1L : 0L),
+                Failed = g.Sum(x => x.SystemAErrorCode != null || x.SystemBErrorCode != null ? 1L : 0L),
+            })
+            .ToListAsync(cancellationToken);
+
+        var sentByDay = sentRaw.ToDictionary(r => epoch.AddDays(r.DayIndex), r => new { r.Success, r.Failed });
+
+        var points = recvByDay.Keys.Union(sentByDay.Keys)
+            .OrderBy(day => day)
+            .Select(day =>
+            {
+                recvByDay.TryGetValue(day, out var r);
+                sentByDay.TryGetValue(day, out var s);
+                return new CountPointDto(
+                    Day: day,
+                    ReceivedSuccess: r?.Success ?? 0L,
+                    ReceivedFailed: r?.Failed ?? 0L,
+                    SentSuccess: s?.Success ?? 0L,
+                    SentFailed: s?.Failed ?? 0L);
+            })
+            .ToList();
+
+        return new CountTimeSeriesDto(from, to, points);
     }
 
     // pibr.002 (proxy-synthesised Echo reply) is excluded from all counts; date bounds apply to CreatedAt.

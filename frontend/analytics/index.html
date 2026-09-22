@@ -62,6 +62,9 @@
     .tile.accent-ok { border-top: 3px solid var(--ok); }
     .tile.accent-err { border-top: 3px solid var(--err); }
     .tile.accent-warn { border-top: 3px solid var(--warn); }
+    .tile .d.amt { font-variant-numeric: tabular-nums; }
+    .sys-title { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 650; margin: 22px 0 12px; }
+    .sys-title .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-top: 18px; }
     .panel {
       background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
@@ -96,8 +99,8 @@
       <div class="sub"><span id="replLabel"></span> · <span id="status">carregando…</span></div>
     </div>
     <div class="controls">
-      <label>De <input type="datetime-local" id="from" /></label>
-      <label>Até <input type="datetime-local" id="to" /></label>
+      <label>De <input type="date" id="from" /></label>
+      <label>Até <input type="date" id="to" /></label>
       <label>Auto
         <select id="auto">
           <option value="0">desligado</option>
@@ -126,6 +129,8 @@
   <main>
     <section class="tiles" id="tiles"></section>
 
+    <section id="systemScoreboards"></section>
+
     <div class="grid">
       <div class="panel" style="grid-column: 1 / -1;">
         <h2>Evolução da propagação diária (%)</h2>
@@ -138,6 +143,10 @@
       <div class="panel" style="grid-column: 1 / -1;">
         <h2>Valores por dia (recebidos/enviados · sucesso/falha)</h2>
         <div id="amountTrend"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <h2>Transferências e devoluções por dia (quantidade · recebidas/enviadas · sucesso/falha)</h2>
+        <div id="countTrend"></div>
       </div>
     </div>
 
@@ -215,19 +224,48 @@
     function renderTiles(s) {
       const inb = s.inbound, err = s.errors;
       const A = nameA(), B = nameB();
-      const totalErrors = err.inboundSystemAErrors + err.inboundSystemBErrors +
-        err.outboundSystemAErrors + err.outboundSystemBErrors;
+      const errorsA = err.inboundSystemAErrors + err.outboundSystemAErrors;
+      const errorsB = err.inboundSystemBErrors + err.outboundSystemBErrors;
       const tiles = [
         { k: `Recebidas de ${A}`, v: inb.receivedFromA, cls: "accent-a", d: `mensagens de entrada vistas em ${A}` },
         { k: `Propagadas ${A}→${B}`, v: inb.propagatedToB, cls: "accent-b", d: pct(inb.propagatedToB, inb.receivedFromA) + "% das recebidas" },
         { k: `Consumidas por ${B}`, v: inb.consumedByB, cls: "accent-ok", d: pct(inb.consumedByB, inb.propagatedToB) + "% das propagadas" },
         { k: "Aguardando consumo", v: inb.awaitingConsumption, cls: "accent-warn", d: "assinadas, ainda sem confirmação" },
         { k: "Lacuna de propagação", v: inb.propagationGap, cls: "accent-warn", d: `em ${A}, nunca enviadas para ${B}` },
-        { k: "Erros", v: totalErrors, cls: "accent-err", d: fmt(err.discrepancies) + " divergências" },
+        { k: `Erros ${A}`, v: errorsA, cls: "accent-err", d: `entrada ${fmt(err.inboundSystemAErrors)} · saída ${fmt(err.outboundSystemAErrors)}` },
+        { k: `Erros ${B}`, v: errorsB, cls: "accent-err", d: `entrada ${fmt(err.inboundSystemBErrors)} · saída ${fmt(err.outboundSystemBErrors)}` },
+        { k: "Divergências", v: err.discrepancies, cls: "accent-warn", d: "campos divergentes entre sistemas" },
       ];
       $("tiles").innerHTML = tiles.map(t =>
         `<div class="tile ${t.cls}"><div class="k">${esc(t.k)}</div><div class="v">${fmt(t.v)}</div><div class="d">${esc(t.d)}</div></div>`
       ).join("");
+    }
+
+    // Per-system scoreboards (RF: numbers + amounts of transfers/refunds sent & received by each system).
+    // Value = transaction count; subtitle = summed amount (BRL). Grouped under each system's name.
+    function renderSystemScoreboards(s) {
+      const el = $("systemScoreboards");
+      const ps = s.perSystem;
+      if (!ps) { el.innerHTML = ""; return; }
+      const brl = (v) => (v ?? 0).toLocaleString(LOCALE, { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+      const groups = [
+        { name: nameA(), stats: ps.systemA, cls: "accent-a", color: "var(--a)" },
+        { name: nameB(), stats: ps.systemB, cls: "accent-b", color: "var(--b)" },
+      ];
+      el.innerHTML = groups.map(g => {
+        const st = g.stats || {};
+        const cards = [
+          { k: "Transferências enviadas", c: st.transfersSentCount, a: st.transfersSentAmount },
+          { k: "Transferências recebidas", c: st.transfersReceivedCount, a: st.transfersReceivedAmount },
+          { k: "Devoluções enviadas", c: st.refundsSentCount, a: st.refundsSentAmount },
+          { k: "Devoluções recebidas", c: st.refundsReceivedCount, a: st.refundsReceivedAmount },
+        ];
+        const tiles = cards.map(t =>
+          `<div class="tile ${g.cls}"><div class="k">${esc(t.k)}</div><div class="v">${fmt(t.c)}</div><div class="d amt">${esc(brl(t.a))}</div></div>`
+        ).join("");
+        return `<div class="sys-title"><span class="dot" style="background:${g.color}"></span>${esc(g.name)}</div>` +
+          `<div class="tiles">${tiles}</div>`;
+      }).join("");
     }
 
     function renderFunnel(s) {
@@ -494,10 +532,71 @@
         `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block" role="img" aria-label="Evolução diária dos valores recebidos e enviados por status">${grid}${lines}${xlabels}</svg>`;
     }
 
-    function toUtcParam(localValue) {
-      if (!localValue) return null;
-      // datetime-local is local time; convert to a UTC ISO string for the API.
-      return new Date(localValue).toISOString();
+    // Daily count chart: four lines (received/sent × success/failed) counting transfers + refunds,
+    // inline SVG, integer axis (no libraries).
+    function renderCountsTrend(points) {
+      const el = $("countTrend");
+      if (!points || points.length === 0) { el.innerHTML = `<div class="empty">Sem dados no período.</div>`; return; }
+
+      const W = 820, H = 260, padL = 46, padR = 16, padT = 14, padB = 34;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const n = points.length;
+      const series = [
+        { key: "receivedSuccess", color: "var(--ok)", label: "Recebidas (sucesso)" },
+        { key: "receivedFailed", color: "var(--err)", label: "Recebidas (falha)" },
+        { key: "sentSuccess", color: "var(--accent)", label: "Enviadas (sucesso)" },
+        { key: "sentFailed", color: "var(--warn)", label: "Enviadas (falha)" },
+      ];
+      const peak = Math.max(1, ...points.flatMap(p => series.map(s => p[s.key] || 0)));
+      const step = niceStep(peak);
+      const top = Math.ceil(peak / step) * step;
+      const x = (i) => n === 1 ? padL + plotW / 2 : padL + (plotW * i) / (n - 1);
+      const y = (v) => padT + plotH * (1 - Math.max(0, Math.min(top, v)) / top);
+
+      // Evenly-spaced integer gridlines, 0..top.
+      let grid = "";
+      for (let v = 0; v <= top; v += step) {
+        const gy = y(v);
+        grid += `<line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="var(--border)" stroke-width="1"/>`;
+        grid += `<text x="${padL - 8}" y="${gy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(v)}</text>`;
+      }
+
+      const lines = series.map(s => {
+        const coords = points.map((p, i) => `${x(i)},${y(p[s.key] || 0)}`).join(" ");
+        const line = n > 1 ? `<polyline points="${coords}" fill="none" stroke="${s.color}" stroke-width="2"/>` : "";
+        const markers = points.map((p, i) => {
+          const day = new Date(p.day).toLocaleDateString(LOCALE);
+          const title = `${day} · ${esc(s.label)}: ${fmt(p[s.key] || 0)}`;
+          return `<circle cx="${x(i)}" cy="${y(p[s.key] || 0)}" r="3.5" fill="${s.color}"><title>${esc(title)}</title></circle>`;
+        }).join("");
+        return line + markers;
+      }).join("");
+
+      const idxs = n === 1 ? [0] : [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+      const xlabels = idxs.map(i => {
+        const d = new Date(points[i].day).toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
+        return `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`;
+      }).join("");
+
+      const legend = series.map(s =>
+        `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:12px;color:var(--muted)">
+          <span style="width:12px;height:3px;border-radius:2px;background:${s.color};display:inline-block"></span>${esc(s.label)}
+        </span>`).join("");
+
+      el.innerHTML = `<div style="margin-bottom:8px">${legend}</div>` +
+        `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block" role="img" aria-label="Evolução diária da quantidade de transferências e devoluções por status">${grid}${lines}${xlabels}</svg>`;
+    }
+
+    // Convert a date-only filter value ("YYYY-MM-DD") to a UTC ISO string. `edge` picks the local-day
+    // bound: "start" → 00:00:00.000, "end" → 23:59:59.999 (so the "to" day is fully included).
+    function toUtcParam(dateValue, edge) {
+      if (!dateValue) return null;
+      const [y, m, d] = dateValue.split("-").map(Number);
+      if (!y || !m || !d) return null;
+      const dt = edge === "end"
+        ? new Date(y, m - 1, d, 23, 59, 59, 999)
+        : new Date(y, m - 1, d, 0, 0, 0, 0);
+      return dt.toISOString();
     }
 
     async function load() {
@@ -506,8 +605,8 @@
       status.className = "";
       status.textContent = "atualizando…";
       const params = new URLSearchParams();
-      const from = toUtcParam($("from").value);
-      const to = toUtcParam($("to").value);
+      const from = toUtcParam($("from").value, "start");
+      const to = toUtcParam($("to").value, "end");
       if (from) params.set("from", from);
       if (to) params.set("to", to);
       try {
@@ -515,6 +614,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const s = await res.json();
         renderTiles(s);
+        renderSystemScoreboards(s);
         renderFunnel(s);
         renderLatency(s);
         renderByType(s);
@@ -534,6 +634,10 @@
         // Daily amounts, received/sent × success/failed (separate endpoint; same from/to window).
         const amtRes = await fetch(`${apiBase}/api/v1/analytics/amounts-timeseries?${params.toString()}`, { headers: { Accept: "application/json" } });
         renderAmountsTrend(amtRes.ok ? (await amtRes.json()).points : []);
+
+        // Daily transfer/refund counts, received/sent × success/failed (separate endpoint; same window).
+        const cntRes = await fetch(`${apiBase}/api/v1/analytics/counts-timeseries?${params.toString()}`, { headers: { Accept: "application/json" } });
+        renderCountsTrend(cntRes.ok ? (await cntRes.json()).points : []);
 
         status.textContent = "atualizado às " + new Date().toLocaleTimeString(LOCALE);
       } catch (e) {
