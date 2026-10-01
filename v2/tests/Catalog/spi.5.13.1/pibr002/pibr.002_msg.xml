@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Envelope xmlns="https://www.bcb.gov.br/pi/pibr.002/1.3">
+    <AppHdr>
+        <Fr>
+            <FIId>
+                <FinInstnId>
+                    <Othr>
+                        <Id>00038166</Id>
+                    </Othr>
+                </FinInstnId>
+            </FIId>
+        </Fr>
+        <To>
+            <FIId>
+                <FinInstnId>
+                    <Othr>
+                        <Id>99999010</Id>
+                    </Othr>
+                </FinInstnId>
+            </FIId>
+        </To>
+        <BizMsgIdr>M00038166eca1e252ad694dc69df3159</BizMsgIdr>
+        <MsgDefIdr>pibr.002.spi.1.3</MsgDefIdr>
+        <CreDt>2020-04-07T13:45:48.491Z</CreDt>
+        <Sgntr/>
+    </AppHdr>
+    <Document>
+        <EchoRpt>
+            <GrpHdr>
+                <MsgId>M00038166eca1e252ad694dc69df3159</MsgId>
+                <CreDtTm>2020-04-07T13:45:48.491Z</CreDtTm>
+            </GrpHdr>
+            <EchoTxInf>
+                <OrgnlData>Campo livre</OrgnlData>
+            </EchoTxInf>
+        </EchoRpt>
+    </Document>
+</Envelope>

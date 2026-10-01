@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\ConvivenciaPix.V2.Domain.csproj" />
+    <ProjectReference Include="..\Application\ConvivenciaPix.V2.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ConvivenciaPix.V2.Infrastructure.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="System.Security.Cryptography.Xml" />
+    <PackageReference Include="Dinamo.Hsm" />
+  </ItemGroup>
+
+  <!-- Embed the canonical schema scripts from v2/infra/sql so SqlSchemaBootstrapper can apply
+       them in-process (test fixtures). The same files are run via sqlcmd by `make migrate`. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\infra\sql\*.sql" LinkBase="SqlScripts" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,136 @@
+<!--
+ Schema for XML Signatures
+    http://www.w3.org/2000/09/xmldsig#
+    $Revision: 1.1 $ on $Date: 2002/02/08 20:32:26 $ by $Author: reagle $
+
+    Copyright 2001 The Internet Society and W3C (Massachusetts Institute
+    of Technology, Institut National de Recherche en Informatique et en
+    Automatique, Keio University). All Rights Reserved.
+    http://www.w3.org/Consortium/Legal/
+
+    This document is governed by the W3C Software License [1] as described
+    in the FAQ [2].
+
+    [1] http://www.w3.org/Consortium/Legal/copyright-software-19980720
+    [2] http://www.w3.org/Consortium/Legal/IPR-FAQ-20000620.html#DTD
+-->
+<schema xmlns='http://www.w3.org/2001/XMLSchema'
+        xmlns:ds='http://www.w3.org/2000/09/xmldsig#'
+        targetNamespace='http://www.w3.org/2000/09/xmldsig#'
+        elementFormDefault='qualified'>
+
+    <!--  Start Signature  -->
+    <element name="Signature" type="ds:SignatureType"/>
+    <complexType name="SignatureType">
+        <sequence>
+            <element ref="ds:SignedInfo"/>
+            <element ref="ds:SignatureValue"/>
+            <element ref="ds:KeyInfo"/>
+        </sequence>
+        <attribute name="Id" type="ID"/>
+    </complexType>
+    <element name="SignatureValue" type="ds:SignatureValueType"/>
+    <complexType name="SignatureValueType">
+        <simpleContent>
+            <extension base="base64Binary">
+                <attribute name="Id" type="ID"/>
+            </extension>
+        </simpleContent>
+    </complexType>
+    <!--  Start SignedInfo  -->
+    <element name="SignedInfo" type="ds:SignedInfoType"/>
+    <complexType name="SignedInfoType">
+        <sequence>
+            <element ref="ds:CanonicalizationMethod"/>
+            <element ref="ds:SignatureMethod"/>
+            <element ref="ds:Reference" minOccurs="3" maxOccurs="3"/>
+        </sequence>
+        <attribute name="Id" type="ID"/>
+    </complexType>
+    <element name="CanonicalizationMethod" type="ds:CanonicalizationMethodType"/>
+    <complexType name="CanonicalizationMethodType" mixed="true">
+        <attribute name="Algorithm" type="ds:AlgorithmCanonicalizationType" use="required"/>
+    </complexType>
+    <simpleType name="AlgorithmCanonicalizationType">
+        <restriction base="string">
+            <enumeration value="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+        </restriction>
+    </simpleType>
+    <element name="SignatureMethod" type="ds:SignatureMethodType"/>
+    <complexType name="SignatureMethodType" mixed="true">
+        <attribute name="Algorithm" type="ds:AlgorithmSignatureMethodType" use="required"/>
+    </complexType>
+    <simpleType name="AlgorithmSignatureMethodType">
+        <restriction base="string">
+            <enumeration value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+        </restriction>
+    </simpleType>
+    <!--  Start Reference  -->
+    <element name="Reference" type="ds:ReferenceType"/>
+    <complexType name="ReferenceType">
+        <sequence>
+            <element ref="ds:Transforms"/>
+            <element ref="ds:DigestMethod"/>
+            <element ref="ds:DigestValue"/>
+        </sequence>
+        <attribute name="Id" type="ID"/>
+        <attribute name="URI" type="anyURI"/>
+        <attribute name="Type" type="anyURI"/>
+    </complexType>
+    <element name="Transforms" type="ds:TransformsType"/>
+    <complexType name="TransformsType">
+        <sequence>
+            <element ref="ds:Transform" maxOccurs="2"/>
+        </sequence>
+    </complexType>
+    <element name="Transform" type="ds:TransformType"/>
+    <complexType name="TransformType" mixed="true">
+        <attribute name="Algorithm" type="ds:AlgorithmTransformType" use="required"/>
+    </complexType>
+    <simpleType name="AlgorithmTransformType">
+        <restriction base="string">
+            <enumeration value="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+            <enumeration value="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+        </restriction>
+    </simpleType>
+    <!--  End Reference  -->
+    <element name="DigestMethod" type="ds:DigestMethodType"/>
+    <complexType name="DigestMethodType" mixed="true">
+        <attribute name="Algorithm" type="ds:AlgorithmDigestMethodType" use="required"/>
+    </complexType>
+    <simpleType name="AlgorithmDigestMethodType">
+        <restriction base="string">
+            <enumeration value="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        </restriction>
+    </simpleType>
+    <element name="DigestValue" type="ds:DigestValueType"/>
+    <simpleType name="DigestValueType">
+        <restriction base="base64Binary"/>
+    </simpleType>
+    <!--  End SignedInfo  -->
+    <!--  Start KeyInfo  -->
+    <element name="KeyInfo" type="ds:KeyInfoType"/>
+    <complexType name="KeyInfoType" mixed="true">
+        <sequence>
+            <element ref="ds:X509Data"/>
+        </sequence>
+        <attribute name="Id" type="ID" use="required"/>
+    </complexType>
+    <element name="KeyName" type="string"/>
+    <!--  Start X509Data  -->
+    <element name="X509Data" type="ds:X509DataType"/>
+    <complexType name="X509DataType">
+        <sequence>
+            <element name="X509IssuerSerial" type="ds:X509IssuerSerialType"/>
+        </sequence>
+    </complexType>
+    <complexType name="X509IssuerSerialType">
+        <sequence>
+            <element name="X509IssuerName" type="string"/>
+            <element name="X509SerialNumber" type="integer"/>
+        </sequence>
+    </complexType>
+    <!--  End X509Data  -->
+    <!--  End KeyInfo  -->
+    <!--  End Signature  -->
+</schema>

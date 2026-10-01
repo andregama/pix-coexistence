@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Envelope xmlns="https://www.bcb.gov.br/pi/admi.004/1.2">
+    <AppHdr>
+        <Fr>
+            <FIId>
+                <FinInstnId>
+                    <Othr>
+                        <Id>00038166</Id>
+                    </Othr>
+                </FinInstnId>
+            </FIId>
+        </Fr>
+        <To>
+            <FIId>
+                <FinInstnId>
+                    <Othr>
+                        <Id>99999010</Id>
+                    </Othr>
+                </FinInstnId>
+            </FIId>
+        </To>
+        <BizMsgIdr>M0003816612345678901234567890123</BizMsgIdr>
+        <MsgDefIdr>admi.004.spi.1.2</MsgDefIdr>
+        <CreDt>2020-01-01T08:30:12.000Z</CreDt>
+        <Sgntr/>
+    </AppHdr>
+    <Document>
+        <SysEvtNtfctn>
+            <EvtInf>
+                <EvtCd>SPI</EvtCd>
+                <EvtDesc>mudança da data contábil</EvtDesc>
+            </EvtInf>
+        </SysEvtNtfctn>
+    </Document>
+</Envelope>

@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'
+           targetNamespace='https://www.bcb.gov.br/pi/camt.014/1.6'
+           xmlns='https://www.bcb.gov.br/pi/camt.014/1.6'
+           elementFormDefault='qualified'>
+    <xs:element name="Envelope" type="SPIEnvelopeMessage"/>
+    <xs:complexType name="SPIEnvelopeMessage">
+        <xs:sequence>
+            <xs:element name="AppHdr" type="SPI.head.001.001.01"/>
+            <xs:element name="Document" type="SPI.camt.014.001.04"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--inicio BAH-->
+    <xs:complexType name="SPI.head.001.001.01">
+        <xs:sequence>
+            <xs:element name="Fr" type="Party9Choice"/>
+            <xs:element name="To" type="Party9Choice"/>
+            <xs:element name="BizMsgIdr" type="MsgIdType"/>
+            <xs:element name="MsgDefIdr" type="Max35Text"/>
+            <xs:element name="CreDt" type="ISONormalisedDateTime"/>
+            <xs:element name="Sgntr" type="SignatureEnvelope"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="BranchAndFinancialInstitutionIdentification5">
+        <xs:sequence>
+            <xs:element name="FinInstnId" type="FinancialInstitutionIdentification8"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="FinancialInstitutionIdentification8">
+        <xs:sequence>
+            <xs:element name="Othr" type="GenericFinancialIdentification1"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GenericFinancialIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ISONormalisedDateTime">
+        <xs:restriction base="xs:dateTime">
+            <xs:pattern value="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ISPBType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="8"/>
+            <xs:pattern value="[0-9A-Z]{8}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Max35Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="35"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="MsgIdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[M][0-9A-Z]{8}[a-zA-Z0-9]{23}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Party9Choice">
+        <xs:choice>
+            <xs:element name="FIId" type="BranchAndFinancialInstitutionIdentification5"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="SignatureEnvelope">
+        <xs:sequence>
+            <xs:any namespace="http://www.w3.org/2000/09/xmldsig#"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--fim BAH-->
+    <!--inicio ISO-->
+    <xs:complexType name="SPI.camt.014.001.04">
+        <xs:sequence>
+            <xs:element name="RtrMmb" type="ReturnMemberV04"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="ClearingSystemMemberIdentification2">
+        <xs:sequence>
+            <xs:element name="MmbId" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ExternalSystemMemberType1Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="DRCT"/>
+            <xs:enumeration value="IDRT"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="GenericFinancialIdentification1_Cnpj">
+        <xs:sequence>
+            <xs:element name="Id" type="PICnpj"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="Max140Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="140"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Max350Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="350"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Member5">
+        <xs:sequence>
+            <xs:element name="Nm" type="Max140Text"/>
+            <xs:element name="RtrAdr" type="MemberIdentification3Choice_Cnpj"/>
+            <xs:element name="Tp" type="SystemMemberType1Choice"/>
+            <xs:element name="Sts" type="SystemMemberStatus1Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="MemberIdentification3Choice">
+        <xs:choice>
+            <xs:element name="ClrSysMmbId" type="ClearingSystemMemberIdentification2"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="MemberIdentification3Choice_Cnpj">
+        <xs:sequence>
+            <xs:element name="Othr" type="GenericFinancialIdentification1_Cnpj"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="MemberReport5">
+        <xs:sequence>
+            <xs:element name="MmbId" type="MemberIdentification3Choice"/>
+            <xs:element name="MmbOrErr" type="MemberReportOrError6Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="MemberReportOrError5Choice">
+        <xs:choice>
+            <xs:element name="Rpt" type="MemberReport5"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="MemberReportOrError6Choice">
+        <xs:choice>
+            <xs:element name="Mmb" type="Member5"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:simpleType name="MemberStatus1Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="DLTD"/>
+            <xs:enumeration value="ENBL"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="MessageHeader7">
+        <xs:sequence>
+            <xs:element name="MsgId" type="MsgIdType"/>
+            <xs:element name="CreDtTm" type="ISONormalisedDateTime"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PartyRole">
+        <xs:choice>
+            <xs:element name="Prtry" type="ProprietaryType"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="PartyRoleIdentificationSD1V01">
+        <xs:sequence>
+            <xs:element name="FullLglNm" type="Max350Text"/>
+            <xs:element name="RolePlyr" type="RolePlayer"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="PICnpj">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9A-Z]{12}[0-9]{2}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ProprietaryType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="GOVE"/>
+            <xs:enumeration value="ITUS"/>
+            <xs:enumeration value="LESP"/>
+            <xs:enumeration value="PDCT"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="ReturnMemberV04">
+        <xs:sequence>
+            <xs:element name="MsgHdr" type="MessageHeader7"/>
+            <xs:element name="RptOrErr" type="MemberReportOrError5Choice"/>
+            <xs:element name="PtyRoleIdSD1" type="PartyRoleIdentificationSD1V01"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="RolePlayer">
+        <xs:choice>
+            <xs:element name="PtyRole" type="PartyRole"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="SystemMemberStatus1Choice">
+        <xs:choice>
+            <xs:element name="Cd" type="MemberStatus1Code"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="SystemMemberType1Choice">
+        <xs:choice>
+            <xs:element name="Cd" type="ExternalSystemMemberType1Code"/>
+        </xs:choice>
+    </xs:complexType>
+    <!--fim ISO-->
+</xs:schema>

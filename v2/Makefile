@@ -1,0 +1,46 @@
+.PHONY: infra-up infra-down migrate migrate-dev-registry build test lint run-api run-worker run-simulator
+
+SQL_USER     ?= sa
+SQL_PASSWORD ?= Dev@Strong123
+SQL_DB       ?= DB_COEXISTENCE_V2
+# Local stand-in for the database of the first coexistence solution (holds TB_DADOS_CONVIVENCIA).
+REGISTRY_DB  ?= DB_COEXISTENCE
+SQLCMD        = docker exec -i convivencia-v2-sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U $(SQL_USER) -P "$(SQL_PASSWORD)" -C -b
+
+infra-up:
+	docker compose up -d
+
+infra-down:
+	docker compose down
+
+# Applies infra/sql/*.sql. Scripts are idempotent (IF NOT EXISTS guards), so re-running is safe.
+migrate:
+	@$(SQLCMD) -Q "IF DB_ID('$(SQL_DB)') IS NULL CREATE DATABASE [$(SQL_DB)];"
+	@for f in infra/sql/*.sql; do \
+		echo "Applying $$f"; \
+		$(SQLCMD) -d $(SQL_DB) -i /dev/stdin < $$f || exit 1; \
+	done
+
+# LOCAL ONLY: creates the registry database and TB_DADOS_CONVIVENCIA, which in every shared
+# environment already exist and are owned by the first coexistence solution.
+migrate-dev-registry:
+	@$(SQLCMD) -Q "IF DB_ID('$(REGISTRY_DB)') IS NULL CREATE DATABASE [$(REGISTRY_DB)];"
+	@$(SQLCMD) -d $(REGISTRY_DB) -i /dev/stdin < infra/dev/TB_DADOS_CONVIVENCIA.sql
+
+build:
+	dotnet build ConvivenciaPix.V2.sln
+
+test:
+	dotnet test ConvivenciaPix.V2.sln
+
+lint:
+	dotnet format ConvivenciaPix.V2.sln
+
+run-simulator:
+	dotnet run --project tools/BacenSpiSimulator/ConvivenciaPix.V2.BacenSpiSimulator.csproj
+
+run-api:
+	dotnet run --project src/SpiProxyApi/ConvivenciaPix.V2.SpiProxyApi.csproj
+
+run-worker:
+	dotnet run --project src/SpiInboundWorker/ConvivenciaPix.V2.SpiInboundWorker.csproj

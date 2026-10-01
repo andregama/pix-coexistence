@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'
+           targetNamespace='https://www.bcb.gov.br/pi/trck.002/1.1'
+           xmlns='https://www.bcb.gov.br/pi/trck.002/1.1'
+           elementFormDefault='qualified'>
+    <xs:element name="Envelope" type="SPIEnvelopeMessage"/>
+    <xs:complexType name="SPIEnvelopeMessage">
+        <xs:sequence>
+            <xs:element name="AppHdr" type="SPI.head.001.001.01"/>
+            <xs:element name="Document" type="SPI.trck.002.001.03"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--inicio BAH-->
+    <xs:complexType name="SPI.head.001.001.01">
+        <xs:sequence>
+            <xs:element name="Fr" type="Party9Choice"/>
+            <xs:element name="To" type="Party9Choice"/>
+            <xs:element name="BizMsgIdr" type="MsgIdType"/>
+            <xs:element name="MsgDefIdr" type="Max35Text"/>
+            <xs:element name="CreDt" type="ISONormalisedDateTime"/>
+            <xs:element name="Sgntr" type="SignatureEnvelope"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="BranchAndFinancialInstitutionIdentification5">
+        <xs:sequence>
+            <xs:element name="FinInstnId" type="FinancialInstitutionIdentification8"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="FinancialInstitutionIdentification8">
+        <xs:sequence>
+            <xs:element name="Othr" type="GenericFinancialIdentification1"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GenericFinancialIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ISONormalisedDateTime">
+        <xs:restriction base="xs:dateTime">
+            <xs:pattern value="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ISPBType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="8"/>
+            <xs:pattern value="[0-9A-Z]{8}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Max35Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="35"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="MsgIdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[M][0-9A-Z]{8}[a-zA-Z0-9]{23}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Party9Choice">
+        <xs:choice>
+            <xs:element name="FIId" type="BranchAndFinancialInstitutionIdentification5"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="SignatureEnvelope">
+        <xs:sequence>
+            <xs:any namespace="http://www.w3.org/2000/09/xmldsig#"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--fim BAH-->
+    <!--inicio ISO-->
+    <xs:complexType name="SPI.trck.002.001.03">
+        <xs:sequence>
+            <xs:element name="PmtStsTrckrRpt" type="PaymentStatusTrackerReportV03"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="AccountIdentification4Choice">
+        <xs:choice>
+            <xs:element name="Othr" type="GenericAccountIdentification1"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="ActiveCurrencyAndAmount">
+        <xs:simpleContent>
+            <xs:extension base="ActiveCurrencyAndAmount_SimpleType">
+                <xs:attribute name="Ccy" type="ActiveCurrencyCode" use="required"/>
+            </xs:extension>
+        </xs:simpleContent>
+    </xs:complexType>
+    <xs:simpleType name="ActiveCurrencyAndAmount_SimpleType">
+        <xs:restriction base="xs:decimal">
+            <xs:fractionDigits value="2"/>
+            <xs:totalDigits value="18"/>
+            <xs:minInclusive value="0"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ActiveCurrencyCode">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="BRL"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="BranchAndFinancialInstitutionIdentification6">
+        <xs:sequence>
+            <xs:element name="FinInstnId" type="FinancialInstitutionIdentification18"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CashAccount38CdtrAcct">
+        <xs:sequence>
+            <xs:element name="Id" type="AccountIdentification4Choice"/>
+            <xs:element name="Tp" type="CashAccountType2Choice"/>
+            <xs:element minOccurs="0" name="Prxy" type="ProxyAccountIdentification1"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CashAccount38DbtrAcct">
+        <xs:sequence>
+            <xs:element name="Id" type="AccountIdentification4Choice"/>
+            <xs:element name="Tp" type="CashAccountType2Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="CashAccountType2Choice">
+        <xs:choice>
+            <xs:element name="Cd" type="ExternalCashAccountType1Code"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="ClearingSystemMemberIdentification2">
+        <xs:sequence>
+            <xs:element name="MmbId" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ContaUsuarioType">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9A-Z]{1,20}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="DateAndDateTime2Choice">
+        <xs:choice>
+            <xs:element name="DtTm" type="ISONormalisedDateTime"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:simpleType name="EndToEndIdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[E][0-9A-Z]{8}[0-9]{4}[0-1][0-9][0-3][0-9][0-2][0-9][0-5][0-9][a-zA-Z0-9]{11}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ExternalCashAccountType1Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="CACC"/>
+            <xs:enumeration value="OTHR"/>
+            <xs:enumeration value="SLRY"/>
+            <xs:enumeration value="SVGS"/>
+            <xs:enumeration value="TRAN"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ExternalPaymentTransactionStatus1Code_Trck002">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="ACCC"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="FinancialInstitutionIdentification18">
+        <xs:sequence>
+            <xs:element name="ClrSysMmbId" type="ClearingSystemMemberIdentification2"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GenericAccountIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="ContaUsuarioType"/>
+            <xs:element minOccurs="0" name="Issr" type="Max4Numeric"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GenericPersonIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="PICpfCnpj"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="LocalInstrument2Choice">
+        <xs:choice>
+            <xs:element name="Prtry" type="PrtryLclInstrmCode"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:simpleType name="Max4Numeric">
+        <xs:restriction base="xs:integer">
+            <xs:pattern value="[0-9]{1,4}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Max77Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="77"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Party38Choice">
+        <xs:choice>
+            <xs:element name="PrvtId" type="PersonIdentification13"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="Party40Choice">
+        <xs:choice>
+            <xs:element name="Pty" type="PartyIdentification135"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="PartyIdentification135">
+        <xs:sequence>
+            <xs:element name="Id" type="Party38Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PaymentIdentification10">
+        <xs:sequence>
+            <xs:element minOccurs="0" name="InstrId" type="RtrIdType"/>
+            <xs:element name="EndToEndId" type="EndToEndIdType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PaymentScenario1Choice">
+        <xs:sequence>
+            <xs:element name="Prtry" type="ProprietaryPaymentScenario1Code"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PaymentStatusTrackerReportV03">
+        <xs:sequence>
+            <xs:element name="GrpHdr" type="TrackerHeader5"/>
+            <xs:element name="TrckrStsAndTx" type="TrackerStatusAndTransaction18"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PaymentTypeInformation28">
+        <xs:sequence>
+            <xs:element name="LclInstrm" type="LocalInstrument2Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="PersonIdentification13">
+        <xs:sequence>
+            <xs:element name="Othr" type="GenericPersonIdentification1"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="PICpfCnpj">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9]{11}|[0-9A-Z]{12}[0-9]{2}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ProprietaryPaymentScenario1Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="BOK1"/>
+            <xs:enumeration value="BOK2"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="ProxyAccountIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="Max77Text"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="PrtryLclInstrmCode">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="APDN"/>
+            <xs:enumeration value="APES"/>
+            <xs:enumeration value="AUTO"/>
+            <xs:enumeration value="DICT"/>
+            <xs:enumeration value="INIC"/>
+            <xs:enumeration value="MANU"/>
+            <xs:enumeration value="QRDN"/>
+            <xs:enumeration value="QRES"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="RtrIdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[D][0-9A-Z]{8}[0-9]{4}[0-1][0-9][0-3][0-9][0-2][0-9][0-5][0-9][a-zA-Z0-9]{11}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="TrackerHeader5">
+        <xs:sequence>
+            <xs:element name="MsgId" type="MsgIdType"/>
+            <xs:element name="CreDtTm" type="ISONormalisedDateTime"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="TrackerPaymentTransaction14">
+        <xs:sequence>
+            <xs:element name="PmtId" type="PaymentIdentification10"/>
+            <xs:element name="PmtTpInf" type="PaymentTypeInformation28"/>
+            <xs:element name="PmtScnro" type="PaymentScenario1Choice"/>
+            <xs:element name="IntrBkSttlmAmt" type="ActiveCurrencyAndAmount"/>
+            <xs:element name="ReqdExctnDt" type="DateAndDateTime2Choice"/>
+            <xs:element name="Dbtr" type="Party40Choice"/>
+            <xs:element name="DbtrAcct" type="CashAccount38DbtrAcct"/>
+            <xs:element name="DbtrAgt" type="BranchAndFinancialInstitutionIdentification6"/>
+            <xs:element name="CdtrAgt" type="BranchAndFinancialInstitutionIdentification6"/>
+            <xs:element name="Cdtr" type="Party40Choice"/>
+            <xs:element name="CdtrAcct" type="CashAccount38CdtrAcct"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="TrackerStatus4">
+        <xs:sequence>
+            <xs:element name="Sts" type="ExternalPaymentTransactionStatus1Code_Trck002"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="TrackerStatusAndTransaction18">
+        <xs:sequence>
+            <xs:element name="TxSts" type="TrackerStatus4"/>
+            <xs:element maxOccurs="unbounded" name="Tx" type="TrackerPaymentTransaction14"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--fim ISO-->
+</xs:schema>

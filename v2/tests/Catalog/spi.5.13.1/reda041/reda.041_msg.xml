@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Envelope xmlns="https://www.bcb.gov.br/pi/reda.041/1.7">
+  <AppHdr>
+    <Fr>
+      <FIId>
+        <FinInstnId>
+          <Othr>
+            <Id>00038166</Id>
+          </Othr>
+        </FinInstnId>
+      </FIId>
+    </Fr>
+    <To>
+      <FIId>
+        <FinInstnId>
+          <Othr>
+            <Id>99999010</Id>
+          </Othr>
+        </FinInstnId>
+      </FIId>
+    </To>
+    <BizMsgIdr>M0003816612345678901234567890123</BizMsgIdr>
+    <MsgDefIdr>reda.041.spi.1.7</MsgDefIdr>
+    <CreDt>2020-01-01T08:30:12.000Z</CreDt>
+    <Sgntr/>
+  </AppHdr>
+  <Document>
+    <PtyActvtyAdvc>
+      <MsgHdr>
+        <MsgId>M0003816612345678901234567890123</MsgId>
+        <CreDtTm>2020-01-01T08:30:12.000Z</CreDtTm>
+      </MsgHdr>
+      <PtyActvty>
+        <Chng>
+          <PtyId>
+            <Id>
+              <Id>
+                <PrtryId>
+                  <Id>55555555</Id>
+                  <Issr>BCB</Issr>
+                </PrtryId>
+              </Id>
+            </Id>
+          </PtyId>
+        </Chng>
+        <Rcrd>
+          <Othr>
+            <FldNm>MODP</FldNm>
+            <OdFldVal>LESP</OdFldVal>
+            <NewFldVal>PDCT</NewFldVal>
+          </Othr>
+           <Othr>
+            <FldNm>NOME</FldNm>
+            <OdFldVal>antigo nome participante</OdFldVal>
+            <NewFldVal>novo nome participante</NewFldVal>
+          </Othr>
+           <Othr>
+            <FldNm>NOMR</FldNm>
+            <OdFldVal>antigo nome reduzido</OdFldVal>
+            <NewFldVal>novo nome reduzido</NewFldVal>
+          </Othr>
+        </Rcrd>
+      </PtyActvty>
+    </PtyActvtyAdvc>
+  </Document>
+</Envelope>

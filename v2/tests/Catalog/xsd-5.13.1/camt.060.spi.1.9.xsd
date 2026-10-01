@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'
+           targetNamespace='https://www.bcb.gov.br/pi/camt.060/1.9'
+           xmlns='https://www.bcb.gov.br/pi/camt.060/1.9'
+           elementFormDefault='qualified'>
+    <xs:element name="Envelope" type="SPIEnvelopeMessage"/>
+    <xs:complexType name="SPIEnvelopeMessage">
+        <xs:sequence>
+            <xs:element name="AppHdr" type="SPI.head.001.001.01"/>
+            <xs:element name="Document" type="SPI.camt.060.001.05"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--inicio BAH-->
+    <xs:complexType name="SPI.head.001.001.01">
+        <xs:sequence>
+            <xs:element name="Fr" type="Party9Choice"/>
+            <xs:element name="To" type="Party9Choice"/>
+            <xs:element name="BizMsgIdr" type="MsgIdType"/>
+            <xs:element name="MsgDefIdr" type="Max35Text"/>
+            <xs:element name="CreDt" type="ISONormalisedDateTime"/>
+            <xs:element name="Sgntr" type="SignatureEnvelope"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="BranchAndFinancialInstitutionIdentification5">
+        <xs:sequence>
+            <xs:element name="FinInstnId" type="FinancialInstitutionIdentification8"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="FinancialInstitutionIdentification8">
+        <xs:sequence>
+            <xs:element name="Othr" type="GenericFinancialIdentification1"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GenericFinancialIdentification1">
+        <xs:sequence>
+            <xs:element name="Id" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ISONormalisedDateTime">
+        <xs:restriction base="xs:dateTime">
+            <xs:pattern value="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ISPBType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="8"/>
+            <xs:pattern value="[0-9A-Z]{8}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Max35Text">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="35"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="MsgIdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[M][0-9A-Z]{8}[a-zA-Z0-9]{23}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Party9Choice">
+        <xs:choice>
+            <xs:element name="FIId" type="BranchAndFinancialInstitutionIdentification5"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="SignatureEnvelope">
+        <xs:sequence>
+            <xs:any namespace="http://www.w3.org/2000/09/xmldsig#"/>
+        </xs:sequence>
+    </xs:complexType>
+    <!--fim BAH-->
+    <!--inicio ISO-->
+    <xs:complexType name="SPI.camt.060.001.05">
+        <xs:sequence>
+            <xs:element name="AcctRptgReq" type="AccountReportingRequestV05"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="AccountReportingRequestV05">
+        <xs:sequence>
+            <xs:element name="GrpHdr" type="GroupHeader77"/>
+            <xs:element name="RptgReq" type="ReportingRequest5"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="BalanceType10Choice">
+        <xs:choice>
+            <xs:element name="Prtry" type="TipoArquivoOuSolicitacaoCode"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:complexType name="BalanceType13">
+        <xs:sequence>
+            <xs:element name="CdOrPrtry" type="BalanceType10Choice"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="BranchAndFinancialInstitutionIdentification6">
+        <xs:sequence>
+            <xs:element name="FinInstnId" type="FinancialInstitutionIdentification18"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="ClearingSystemMemberIdentification2">
+        <xs:sequence>
+            <xs:element name="MmbId" type="ISPBType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="DatePeriodDetails1">
+        <xs:sequence>
+            <xs:element name="FrDt" type="ISODate"/>
+            <xs:element minOccurs="0" name="ToDt" type="ISODate"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="FinancialInstitutionIdentification18">
+        <xs:sequence>
+            <xs:element name="ClrSysMmbId" type="ClearingSystemMemberIdentification2"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="GroupHeader77">
+        <xs:sequence>
+            <xs:element name="MsgId" type="MsgIdType"/>
+            <xs:element name="CreDtTm" type="ISONormalisedDateTime"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="IdType">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="32"/>
+            <xs:pattern value="[E|D][0-9A-Z]{8}[0-9]{4}[0-1][0-9][0-3][0-9][0-2][0-9][0-5][0-9][a-zA-Z0-9]{11}|[A-Z]{3}[0-9]{4}[0-1][0-9][0-3][0-9][a-zA-Z0-9]{9}"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="ISODate">
+        <xs:restriction base="xs:date"/>
+    </xs:simpleType>
+    <xs:simpleType name="ISONormalisedTime">
+        <xs:restriction base="xs:time">
+            <xs:pattern value="[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Party40Choice">
+        <xs:choice>
+            <xs:element name="Agt" type="BranchAndFinancialInstitutionIdentification6"/>
+        </xs:choice>
+    </xs:complexType>
+    <xs:simpleType name="QueryType3Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="ALLL"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="ReportingPeriod2">
+        <xs:sequence>
+            <xs:element name="FrToDt" type="DatePeriodDetails1"/>
+            <xs:element minOccurs="0" name="FrToTm" type="TimePeriodDetails1"/>
+            <xs:element name="Tp" type="QueryType3Code"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:complexType name="ReportingRequest5">
+        <xs:sequence>
+            <xs:element minOccurs="0" name="Id" type="IdType"/>
+            <xs:element name="ReqdMsgNmId" type="ReqdMsgNmIdType"/>
+            <xs:element name="AcctOwnr" type="Party40Choice"/>
+            <xs:element minOccurs="0" name="RptgPrd" type="ReportingPeriod2"/>
+            <xs:element minOccurs="0" name="ReqdBalTp" type="BalanceType13"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="ReqdMsgNmIdType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="camt.052"/>
+            <xs:enumeration value="camt.053"/>
+            <xs:enumeration value="camt.054"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="TimePeriodDetails1">
+        <xs:sequence>
+            <xs:element name="FrTm" type="ISONormalisedTime"/>
+            <xs:element name="ToTm" type="ISONormalisedTime"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:simpleType name="TipoArquivoOuSolicitacaoCode">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="CRE"/>
+            <xs:enumeration value="CSA"/>
+            <xs:enumeration value="REL"/>
+            <xs:enumeration value="TRD"/>
+            <xs:enumeration value="TRT"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <!--fim ISO-->
+</xs:schema>
