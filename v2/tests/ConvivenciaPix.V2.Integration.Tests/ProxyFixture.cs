@@ -88,8 +88,6 @@ public sealed class ProxyFixture : WebApplicationFactory<Program>, IAsyncLifetim
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:SqlServer"] = SqlConnectionString,
-                // In real environments the registry table lives in the first solution's database.
-                ["ConnectionStrings:CoexistenceRegistry"] = SqlConnectionString,
                 ["ConnectionStrings:Redis"] = _redis.GetConnectionString(),
                 ["Spi:Ispb"] = Ispb,
                 ["SpiGateway:BaseUrl"] = SimulatorUrl,

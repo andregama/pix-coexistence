@@ -1,4 +1,79 @@
-# Coexistence Solution Specification: Pix System Migration
+# Pix Coexistence
+
+A Brazilian bank is replacing its proprietary Pix system (**System A**) with an internally developed one (**System B**). This repository holds two independent solutions that let both coexist in front of the Central Bank of Brazil (Bacen):
+
+| | Where | Idea |
+|---|---|---|
+| **v1** | repository root (`src/`, `tests/`, `tools/`, `infra/`, `ConvivenciaPix.sln`) | System A stays the only connection to Bacen; System B talks to a simulated SPI and receives a mirror of System A's traffic. Specified in "v1 specification" below. |
+| **v2** | `v2/` (`ConvivenciaPix.V2.sln`) | A proxy is the SPI endpoint for **both** systems: it forwards what they send to the real SPI and routes what Bacen sends to the right system. |
+
+**The two are totally separate.** v2 has its own solution, props files, tables, Redis channels, Kafka topics, docker-compose and tests. Code that v2 needs from v1 is **copied**, never referenced, and work on one must not touch the other's files.
+
+---
+
+# v2: SPI forwarding proxy
+
+`v2/README.md` is the detailed reference (routing table per message type, guarantees, configuration, local run, cut-over). This section is the summary to work from.
+
+## How it works
+
+* **Sending.** Each system calls `SpiProxyApi` on its own listener port; the port identifies the caller (System A, System B, plus an admin port). The proxy records `MsgId` → system **before** forwarding, forwards the body untouched to the real SPI, and returns Bacen's status, `PI-ResourceId` and body as they came. Nothing is retried towards Bacen.
+* **Receiving.** `SpiInboundWorker` is the only consumer of the bank's SPI output stream. For each message it:
+  1. verifies Bacen's signature (HSM `VerifyPIX`);
+  2. routes each transaction in the message;
+  3. builds what each system receives — the whole message, or only that system's transactions when they belong to different systems (split) — and signs it with the bank's HSM (`SignPIX`);
+  4. stores the original, the per-system deliveries and the routing decision in one SQL transaction, and only then acknowledges the batch to Bacen.
+* **Delivery.** Each system pulls its own queue from the proxy with the usual SPI stream endpoints. SQL is the queue of record (rows leased per stream); Redis only wakes long-polling streams.
+* **Audit.** Kafka receives audit events (ids only) through an outbox. It is not part of the message path.
+
+## Routing rules
+
+Each message type has an ordered chain of resolvers (`RoutingTable.Defaults`, overridable in `Routing:Rules`); the first that decides wins, and the decision is stored as `RouteSource`.
+
+| Kind of message | Rule |
+|---|---|
+| Response to a message a system sent | Back to the sender — by the original message id when the type carries one, otherwise by the transaction (EndToEndId / RtrId / mandate id). The SPI pacs.002 has **no** original message id. |
+| Received transfer (pacs.008) and other customer-addressed requests | By the customer's document: present in `TB_DADOS_CONVIVENCIA.Documento` → System B, otherwise System A. Later messages for the same transaction follow it. |
+| Not addressed to a customer (admi.004, unsolicited reports) | Both systems. |
+| pibr.002 | The system that sent the same content in a pibr.001. |
+| Nothing matches | `Routing:DefaultSystem` (System A). |
+
+A message that fails signature verification or is not XML is **quarantined**: stored, delivered to no system, counted in a metric.
+
+## Layout (`v2/`)
+
+| Path | Content |
+|---|---|
+| `src/Domain`, `src/Application` | routing engine, use cases, ports |
+| `src/Infrastructure` | SQL repositories (plain ADO.NET), parser, splitter, HSM signing, SPI gateway, pull loop, outbox, cleanup |
+| `src/SpiProxyApi` | the three listeners, SPI endpoints, admin API over the System B document registry |
+| `src/SpiInboundWorker` | pulls from Bacen, signs, publishes the audit outbox, purges expired rows |
+| `tools/BacenSpiSimulator` | stand-in for the real SPI (local runs and tests) |
+| `infra/sql` | v2's tables; idempotent scripts, each starting with `SET QUOTED_IDENTIFIER ON` |
+| `tests/Catalog` | examples and schemas of the Bacen SPI catalog 5.13.1 — the reference for the parser, splitter and routing table |
+
+## Rules for working on v2
+
+* **Stack:** .NET 8, Clean Architecture; same conventions as v1 (use-case folders, `XxxOptions`, `[LoggerMessage]`, xUnit + FluentAssertions + Moq, Testcontainers).
+* **One database.** v2 has a single connection (`ConnectionStrings:SqlServer`): its tables sit in the same database as `TB_DADOS_CONVIVENCIA`, as in production.
+* **`TB_DADOS_CONVIVENCIA` is not owned by v2.** It already exists in that database. v2 reads it and edits rows through the admin API, but never creates or alters the table outside local/dev and test fixtures.
+* **Message shapes come from the catalog, not from memory.** When adding or changing a message type, check `tests/Catalog` and keep `SpiCatalogTests` and `SpiMessageSplitterTests` passing. The parser and the splitter must agree on what a transaction is (`SpiTransactionSegments`).
+* **Never acknowledge to Bacen before the message is stored**, and never deliver content that has not been signed by the bank's HSM.
+* **Bytes, not strings**, for message payloads end to end.
+* **Outbound is pass-through.** The proxy does not sign what systems send.
+* **Commands** (from `v2/`): `make infra-up`, `make migrate`, `make migrate-dev-registry`, `make test`, `make run-simulator | run-api | run-worker`. Infrastructure and Integration tests need Docker.
+
+## Known limits
+
+* Outside Production the signer is a software stand-in: it does not produce the SPI signature profile and cannot verify real Bacen signatures. Only the real Dinamo HSM path does, and it has not been exercised yet.
+* The HSM is part of receiving: if it is down, nothing is acknowledged to Bacen.
+* Whether each system can sign its outbound messages with the Bacen-registered key is unconfirmed.
+
+---
+
+# v1 specification: Pix System Migration
+
+> Original specification of the first solution (repository root). Parts of it were superseded during v1's development — `development_plan.md` at the root is closer to what v1 actually does.
 
 ## 1. Problem
 A proprietary Pix system (**System A**) is currently in use at a Brazilian bank, handling messaging with the Central Bank of Brazil (Bacen). This system is being replaced by an internally developed system (**System B**). Since both cannot connect to the Bacen Pix APIs simultaneously without conflict, a solution is required to allow System B to process requests in parallel for validation (homologation) while System A remains the sole connection point.

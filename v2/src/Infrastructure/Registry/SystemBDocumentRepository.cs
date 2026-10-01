@@ -6,10 +6,10 @@ using Microsoft.Data.SqlClient;
 namespace ConvivenciaPix.V2.Infrastructure.Registry;
 
 /// <summary>
-/// Reads and maintains <c>TB_DADOS_CONVIVENCIA</c>, which lives in the database of the first
-/// coexistence solution. This proxy does not own the table and never creates or alters it.
+/// Reads and maintains <c>TB_DADOS_CONVIVENCIA</c>. The table sits in the same database as the
+/// proxy's own tables but predates the proxy, which does not own it and never creates or alters it.
 /// </summary>
-public sealed class SystemBDocumentRepository(RegistryDb db) : ISystemBDocumentRepository
+public sealed class SystemBDocumentRepository(CoexistenceDb db) : ISystemBDocumentRepository
 {
     // SQL-side equivalent of CustomerDocument.Normalize for the punctuation found in CPF/CNPJ.
     private const string NormalizedDocumento =

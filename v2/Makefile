@@ -3,8 +3,6 @@
 SQL_USER     ?= sa
 SQL_PASSWORD ?= Dev@Strong123
 SQL_DB       ?= DB_COEXISTENCE_V2
-# Local stand-in for the database of the first coexistence solution (holds TB_DADOS_CONVIVENCIA).
-REGISTRY_DB  ?= DB_COEXISTENCE
 SQLCMD        = docker exec -i convivencia-v2-sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U $(SQL_USER) -P "$(SQL_PASSWORD)" -C -b
 
 infra-up:
@@ -21,11 +19,10 @@ migrate:
 		$(SQLCMD) -d $(SQL_DB) -i /dev/stdin < $$f || exit 1; \
 	done
 
-# LOCAL ONLY: creates the registry database and TB_DADOS_CONVIVENCIA, which in every shared
-# environment already exist and are owned by the first coexistence solution.
+# LOCAL ONLY: creates TB_DADOS_CONVIVENCIA in the same database. In every shared environment the
+# table already exists there and is not owned by this solution. Run after `make migrate`.
 migrate-dev-registry:
-	@$(SQLCMD) -Q "IF DB_ID('$(REGISTRY_DB)') IS NULL CREATE DATABASE [$(REGISTRY_DB)];"
-	@$(SQLCMD) -d $(REGISTRY_DB) -i /dev/stdin < infra/dev/TB_DADOS_CONVIVENCIA.sql
+	@$(SQLCMD) -d $(SQL_DB) -i /dev/stdin < infra/dev/TB_DADOS_CONVIVENCIA.sql
 
 build:
 	dotnet build ConvivenciaPix.V2.sln

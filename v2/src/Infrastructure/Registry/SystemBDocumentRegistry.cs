@@ -15,8 +15,8 @@ public sealed class RegistryOptions
 
 /// <summary>
 /// Full in-memory snapshot of the System B documents. Most lookups are misses (the customer is not
-/// on System B), so a snapshot avoids a cross-database query for every received transfer, and the
-/// last good snapshot keeps routing working while the registry database is unreachable.
+/// on System B), so a snapshot avoids a query for every received transfer. Other applications also
+/// write to the table, hence the periodic reload rather than invalidation on our own writes only.
 /// </summary>
 public sealed class SystemBDocumentRegistry(ISystemBDocumentRepository repository) : ISystemBDocumentRegistry
 {

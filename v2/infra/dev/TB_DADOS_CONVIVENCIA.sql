@@ -1,5 +1,5 @@
 -- LOCAL DEVELOPMENT ONLY. The registry of customers assigned to System B already exists in the
--- database used by the first coexistence solution; this script recreates its shape so the proxy
+-- coexistence database of every shared environment; this script recreates its shape so the proxy
 -- can run against a local SQL Server. Never apply it to a shared environment.
 IF OBJECT_ID('dbo.TB_DADOS_CONVIVENCIA', 'U') IS NULL
 BEGIN

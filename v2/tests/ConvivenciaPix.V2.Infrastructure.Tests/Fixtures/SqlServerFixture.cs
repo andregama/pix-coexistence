@@ -7,7 +7,7 @@ namespace ConvivenciaPix.V2.Infrastructure.Tests.Fixtures;
 
 /// <summary>
 /// A throwaway SQL Server with the v2 schema applied from <c>v2/infra/sql</c>, plus a copy of the
-/// registry table (which in real environments lives in another database and is not ours to create).
+/// registry table (which in real environments already exists in that database and is not ours to create).
 /// </summary>
 public sealed class SqlServerFixture : IAsyncLifetime
 {
@@ -28,8 +28,6 @@ public sealed class SqlServerFixture : IAsyncLifetime
     public string ConnectionString { get; private set; } = default!;
 
     public CoexistenceDb Db => new(ConnectionString);
-
-    public RegistryDb RegistryDb => new(ConnectionString);
 
     public async Task InitializeAsync()
     {

@@ -4,8 +4,11 @@ using System.Data;
 
 namespace ConvivenciaPix.V2.Infrastructure.Persistence;
 
-/// <summary>Opens connections to one SQL Server database.</summary>
-public abstract class SqlDb(string connectionString)
+/// <summary>
+/// The coexistence database: the proxy's own tables and <c>TB_DADOS_CONVIVENCIA</c>, the registry of
+/// customers assigned to System B, live in the same database (<c>ConnectionStrings:SqlServer</c>).
+/// </summary>
+public sealed class CoexistenceDb(string connectionString)
 {
     public string ConnectionString { get; } = connectionString;
 
@@ -24,12 +27,6 @@ public abstract class SqlDb(string connectionString)
         }
     }
 }
-
-/// <summary>The proxy's own database (<c>DB_COEXISTENCE_V2</c>).</summary>
-public sealed class CoexistenceDb(string connectionString) : SqlDb(connectionString);
-
-/// <summary>The existing database that holds <c>TB_DADOS_CONVIVENCIA</c>.</summary>
-public sealed class RegistryDb(string connectionString) : SqlDb(connectionString);
 
 internal static class SqlExtensions
 {

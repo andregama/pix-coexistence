@@ -28,7 +28,6 @@ public static class InfrastructureServiceExtensions
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.AddSingleton(sp => new CoexistenceDb(RequiredConnectionString(sp, "SqlServer")));
-        services.AddSingleton(sp => new RegistryDb(RequiredConnectionString(sp, "CoexistenceRegistry")));
 
         services.AddSingleton<ISentRouteRepository, SentRouteRepository>();
         services.AddSingleton<ITxAffinityRepository, TxAffinityRepository>();

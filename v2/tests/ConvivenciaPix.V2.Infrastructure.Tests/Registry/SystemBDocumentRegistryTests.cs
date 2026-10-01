@@ -9,7 +9,7 @@ namespace ConvivenciaPix.V2.Infrastructure.Tests.Registry;
 [Collection(SqlServerCollection.Name)]
 public sealed class SystemBDocumentRegistryTests(SqlServerFixture fixture)
 {
-    private readonly SystemBDocumentRepository _repository = new(fixture.RegistryDb);
+    private readonly SystemBDocumentRepository _repository = new(fixture.Db);
 
     private static string NewCpf() => Random.Shared.NextInt64(10_000_000_000, 99_999_999_999).ToString();
 

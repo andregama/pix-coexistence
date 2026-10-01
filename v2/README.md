@@ -1,6 +1,6 @@
 # Pix Coexistence v2 — SPI forwarding proxy
 
-Second version of the coexistence solution. It is independent from the first one at the repository root: own solution, database, Redis channels, Kafka topics, docker-compose and tests. Nothing here references code outside `v2/`.
+Second version of the coexistence solution. It is independent from the first one at the repository root: own solution, tables, Redis channels, Kafka topics, docker-compose and tests. Nothing here references code outside `v2/`.
 
 ## What it does
 
@@ -99,10 +99,10 @@ A chain can be replaced per type in configuration, without code changes:
 | `src/SpiProxyApi` | the three listeners, SPI endpoints, admin API |
 | `src/SpiInboundWorker` | pulls from Bacen, publishes the audit outbox, purges expired rows — run exactly one kind of this host |
 | `tools/BacenSpiSimulator` | stand-in for the real SPI for local runs and tests |
-| `infra/sql` | schema of `DB_COEXISTENCE_V2` (idempotent scripts) |
+| `infra/sql` | the proxy's tables (idempotent scripts) |
 | `infra/dev` | local-only copy of `TB_DADOS_CONVIVENCIA` |
 
-`TB_DADOS_CONVIVENCIA` belongs to the first solution's database (`ConnectionStrings:CoexistenceRegistry`). v2 reads it and edits rows through the admin API but never creates or alters the table.
+There is a single database (`ConnectionStrings:SqlServer`): the proxy's tables are created next to `TB_DADOS_CONVIVENCIA`, which already exists there. v2 reads that table and edits its rows through the admin API but never creates or alters it. Locally the database is `DB_COEXISTENCE_V2`; in a shared environment point the connection string at the database that holds the table and apply `infra/sql` to it (the scripts only add tables named `Spi*`, none of which the first solution uses).
 
 ## Running locally
 
@@ -111,7 +111,7 @@ Requires the .NET 8 SDK and Docker.
 ```bash
 make infra-up              # SQL Server :14330, Redis :6380, Kafka :9193, Jaeger :16687
 make migrate               # DB_COEXISTENCE_V2
-make migrate-dev-registry  # local DB_COEXISTENCE with TB_DADOS_CONVIVENCIA
+make migrate-dev-registry  # local only: TB_DADOS_CONVIVENCIA in the same database
 make run-simulator         # fake SPI on :5290
 make run-api               # System A :5201, System B :5202, admin :5203
 make run-worker            # pulls from the simulator (Development enables InboundPull)
@@ -146,7 +146,7 @@ make test
 
 | Section | Keys |
 |---|---|
-| `ConnectionStrings` | `SqlServer`, `CoexistenceRegistry`, `Redis` (optional) |
+| `ConnectionStrings` | `SqlServer` (the one database: proxy tables + `TB_DADOS_CONVIVENCIA`), `Redis` (optional) |
 | `Listeners` | `SystemAPort`, `SystemBPort`, `AdminPort`, `Https`, `Certificate:{Path,Password}`, `{SystemA,SystemB,Admin}:TrustedThumbprints` |
 | `Spi` | `Ispb` — when set, any other ISPB in the URL is refused |
 | `SpiGateway` | `BaseUrl`, `Transport` (`Http`/`Dinamo`), `MaxConcurrentForwards`, `MtlsKeyId`, `MtlsCertId`, `ServerCertChainId`, `UseGzip`, `VerifyHostName` |
