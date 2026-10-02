@@ -1,4 +1,4 @@
-using ConvivenciaPix.V2.BacenSpiSimulator;
+using ConvivenciaPix.V2.Infrastructure.Simulation;
 using ConvivenciaPix.V2.SpiProxyApi.Listeners;
 using ConvivenciaPix.V2.Tests.Shared;
 using FluentAssertions;
@@ -100,7 +100,7 @@ public sealed class CoexistenceFlowTests(ProxyFixture fixture)
     [Fact]
     public async Task SpiError_IsReturnedToTheSenderUnchanged()
     {
-        var xml = SpiXml.Pacs008(SpiXml.NewMsgId(), SpiXml.NewEndToEndId(), extra: $"<!-- {SimulatorHost.HttpErrorMarker} -->");
+        var xml = SpiXml.Pacs008(SpiXml.NewMsgId(), SpiXml.NewEndToEndId(), extra: $"<!-- {SpiSimulator.HttpErrorMarker} -->");
 
         var response = await fixture.SystemB.SendAsync(xml);
 

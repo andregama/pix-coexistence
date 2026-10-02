@@ -1,11 +1,10 @@
-using ConvivenciaPix.V2.BacenSpiSimulator;
+using ConvivenciaPix.V2.Infrastructure.Simulation;
 using ConvivenciaPix.V2.Domain;
 using ConvivenciaPix.V2.Domain.Repositories;
 using ConvivenciaPix.V2.SpiProxyApi.Listeners;
 using ConvivenciaPix.V2.Tests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -20,32 +19,25 @@ using Xunit;
 namespace ConvivenciaPix.V2.Integration.Tests;
 
 /// <summary>
-/// The proxy with <c>Storage:Provider=InMemory</c>: the API process alone (it runs the pull loop
-/// itself) and the simulator — no SQL Server, Redis, Kafka or Docker.
+/// The proxy with <c>Storage:Provider=InMemory</c>: the API process alone. It runs the pull loop
+/// itself and simulates the SPI — no SQL Server, Redis, Kafka, Docker or SPI endpoint.
 /// </summary>
 public sealed class InMemoryProxyFixture : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private WebApplication _simulator = default!;
-
-    public SimulatorState Bacen => _simulator.Services.GetRequiredService<SimulatorState>();
+    /// <summary>The simulated SPI inside the proxy: inject inbound messages, inspect what was forwarded.</summary>
+    public SimulatorState Bacen => Services.GetRequiredService<SimulatorState>();
 
     public SpiClient SystemA => new(ClientFor(ListenerKind.SystemA));
     public SpiClient SystemB => new(ClientFor(ListenerKind.SystemB));
     public HttpClient Admin => ClientFor(ListenerKind.Admin);
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync()
     {
-        _simulator = SimulatorHost.Build(["--urls", "http://127.0.0.1:0", "--Simulator:LongPollSeconds", "1"]);
-        await _simulator.StartAsync();
-
         using var _ = CreateClient();
+        return Task.CompletedTask;
     }
 
-    public new async Task DisposeAsync()
-    {
-        await base.DisposeAsync();
-        await _simulator.DisposeAsync();
-    }
+    public new async Task DisposeAsync() => await base.DisposeAsync();
 
     protected override IHost CreateHost(IHostBuilder builder)
     {
@@ -60,7 +52,8 @@ public sealed class InMemoryProxyFixture : WebApplicationFactory<Program>, IAsyn
             ["ConnectionStrings:Redis"] = "127.0.0.1:1",
             ["Audit:BootstrapServers"] = "127.0.0.1:1",
             ["Spi:Ispb"] = ProxyFixture.Ispb,
-            ["SpiGateway:BaseUrl"] = _simulator.Urls.First(),
+            ["SpiGateway:BaseUrl"] = "http://127.0.0.1:1",
+            ["Simulator:LongPollSeconds"] = "1",
             ["DeliveryStream:LongPollSeconds"] = "1",
             ["DeliveryStream:PollIntervalMs"] = "100",
             ["Registry:RefreshSeconds"] = "1",
@@ -139,6 +132,33 @@ public sealed class InMemoryProxyTests(InMemoryProxyFixture fixture) : IClassFix
 
         (await fixture.SystemB.PullUntilAsync(xml => xml.Contains(e2e))).Should().Contain("pacs.008");
         (await fixture.SystemA.DrainAsync(2)).Should().NotContain(xml => xml.Contains(e2e));
+    }
+
+    [Fact]
+    public async Task MessageInjectedThroughTheAdminListener_IsRoutedLikeOneFromBacen()
+    {
+        var e2e = SpiXml.NewEndToEndId("99999999");
+        var xml = SpiXml.Pacs008(
+            SpiXml.NewMsgId("99999999"), e2e, creditorDocument: NewCpf(), from: SpiXml.BacenIspb, to: SpiXml.BankIspb);
+
+        var injected = await fixture.Admin.PostAsync("/sim/inbound", new StringContent(xml, Encoding.UTF8, "application/xml"));
+        injected.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Not registered for System B: the default system receives it.
+        (await fixture.SystemA.PullUntilAsync(m => m.Contains(e2e))).Should().Contain("pacs.008");
+        (await fixture.SystemA.Http.PostAsync("/sim/inbound", new StringContent(xml))).StatusCode
+            .Should().Be(HttpStatusCode.NotFound, "the developer endpoints exist only on the admin listener");
+    }
+
+    [Fact]
+    public async Task HttpErrorFromTheSpi_ReachesTheSenderUnchanged()
+    {
+        var xml = SpiXml.Pacs008(SpiXml.NewMsgId(), SpiXml.NewEndToEndId(), extra: $"<!-- {SpiSimulator.HttpErrorMarker} -->");
+
+        var response = await fixture.SystemB.SendAsync(xml);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("urn:ietf:rfc:7807");
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using ConvivenciaPix.V2.Application;
 using ConvivenciaPix.V2.Infrastructure;
 using ConvivenciaPix.V2.Infrastructure.Metrics;
 using ConvivenciaPix.V2.Infrastructure.Persistence;
+using ConvivenciaPix.V2.Infrastructure.Simulation;
 using ConvivenciaPix.V2.SpiProxyApi.Controllers;
 using ConvivenciaPix.V2.SpiProxyApi.Listeners;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -34,7 +35,7 @@ builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 
 // In-memory storage exists only inside this process, so the API also runs the inbound worker's
-// services: one process with no SQL Server, Redis or Kafka.
+// services: one process with no SQL Server, Redis or Kafka — and no SPI, which is simulated.
 var inMemory = StorageOptions.IsInMemory(builder.Configuration);
 if (inMemory)
     builder.Services.AddInboundWorker(builder.Configuration);
@@ -114,6 +115,9 @@ app.UseSwaggerUI(c =>
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+// The simulated SPI's developer endpoints (inject / inspect messages), on the admin listener.
+if (inMemory)
+    app.MapSimulatorDevEndpoints().RequireAuthorization();
 app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/healthz/ready");
 app.MapPrometheusScrapingEndpoint("/metrics");

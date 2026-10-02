@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 
-namespace ConvivenciaPix.V2.BacenSpiSimulator;
+namespace ConvivenciaPix.V2.Infrastructure.Simulation;
 
 /// <summary>
 /// The replies the SPI would send for the messages a participant posts: a pacs.002 for a pacs.008

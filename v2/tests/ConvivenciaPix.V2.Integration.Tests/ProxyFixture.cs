@@ -3,6 +3,7 @@ using ConvivenciaPix.V2.BacenSpiSimulator;
 using ConvivenciaPix.V2.Infrastructure;
 using ConvivenciaPix.V2.Infrastructure.Parsing;
 using ConvivenciaPix.V2.Infrastructure.Persistence;
+using ConvivenciaPix.V2.Infrastructure.Simulation;
 using ConvivenciaPix.V2.SpiProxyApi.Listeners;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;

@@ -98,7 +98,7 @@ A chain can be replaced per type in configuration, without code changes:
 | `src/Infrastructure` | SQL repositories (and their in-memory stand-ins), parser, SPI gateway (HSM / HTTP), Redis notifier, pull loop, outbox, cleanup |
 | `src/SpiProxyApi` | the three listeners, SPI endpoints, admin API |
 | `src/SpiInboundWorker` | pulls from Bacen, publishes the audit outbox, purges expired rows — run exactly one kind of this host |
-| `tools/BacenSpiSimulator` | stand-in for the real SPI for local runs and tests |
+| `tools/BacenSpiSimulator` | stand-in for the real SPI for local runs and tests: HTTP host over the simulator in `src/Infrastructure/Simulation` |
 | `infra/sql` | the proxy's tables (idempotent scripts) |
 | `infra/dev` | local-only copy of `TB_DADOS_CONVIVENCIA` |
 
@@ -130,24 +130,24 @@ curl -X POST --data-binary @received-pacs008.xml http://localhost:5290/sim/inbou
 
 Swagger is at `http://localhost:5203/swagger`, metrics at `http://localhost:5203/metrics`. In Development the listeners are plain HTTP without client certificates.
 
-### Without Docker: in-memory storage
+### Without Docker: in-memory storage and simulated SPI
 
-For a quick try-out, the proxy runs with no SQL Server, Redis or Kafka:
+For a quick try-out, the proxy runs alone — no SQL Server, Redis, Kafka or SPI endpoint:
 
 ```bash
-make run-simulator         # fake SPI on :5290
-make run-inmemory          # API + pull loop in one process; same ports as above
+make run-inmemory          # API + pull loop + simulated SPI in one process; same ports as above
 ```
 
 `make run-inmemory` starts `SpiProxyApi` with `Storage:Provider=InMemory` (launch profile `inmemory`). In this mode:
 
 - routes, affinities, inbound messages, the delivery queue and the System B registry live in the memory of the API process, behind the same repository interfaces as the SQL ones (`Persistence/InMemory`);
 - the API runs the worker's services itself (pull loop, cleanup), because another process could not see its memory — `SpiInboundWorker` refuses to start with this provider;
+- **no request leaves the process towards the SPI**: forwards and pulls are answered by the same simulator the `BacenSpiSimulator` tool serves over HTTP (`Infrastructure/Simulation`), through `SimulatedSpiGateway`. `SpiGateway:Transport` and `SpiGateway:BaseUrl` are ignored; the `Simulator` section configures it. Its developer endpoints (`/sim/inbound`, `/sim/sent`, `/sim/status`) are on the admin listener;
 - audit events are written to the log instead of Kafka, and long-poll wake-ups stay in process instead of going through Redis;
 - the registry starts empty: add customers through the admin API;
-- **nothing survives a restart**, so a message acknowledged to the SPI is lost if the process stops. The provider is refused in Production and is meant for the simulator only.
+- **nothing survives a restart.** The provider is refused in Production.
 
-The same curl commands as above work unchanged.
+The same curl commands as above work, except that "Bacen" sends through the admin port: `curl -X POST --data-binary @received-pacs008.xml http://localhost:5203/sim/inbound`.
 
 ## Tests
 
@@ -167,7 +167,8 @@ The Docker-free subset: `dotnet test ConvivenciaPix.V2.sln --filter "FullyQualif
 
 | Section | Keys |
 |---|---|
-| `Storage` | `Provider`: `SqlServer` (default) or `InMemory` (single process, no SQL Server / Redis / Kafka; refused in Production) |
+| `Storage` | `Provider`: `SqlServer` (default) or `InMemory` (single process, no SQL Server / Redis / Kafka, SPI simulated in process; refused in Production) |
+| `Simulator` (in-memory mode, and the simulator tool) | `LongPollSeconds`, `MaxMessagesPerMultipart`, `AutoReply` |
 | `ConnectionStrings` | `SqlServer` (the one database: proxy tables + `TB_DADOS_CONVIVENCIA`), `Redis` (optional) |
 | `Listeners` | `SystemAPort`, `SystemBPort`, `AdminPort`, `Https`, `Certificate:{Path,Password}`, `{SystemA,SystemB,Admin}:TrustedThumbprints` |
 | `Spi` | `Ispb` — when set, any other ISPB in the URL is refused |

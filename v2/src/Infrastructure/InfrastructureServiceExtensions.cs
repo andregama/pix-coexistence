@@ -13,6 +13,7 @@ using ConvivenciaPix.V2.Infrastructure.Persistence;
 using ConvivenciaPix.V2.Infrastructure.Persistence.InMemory;
 using ConvivenciaPix.V2.Infrastructure.Registry;
 using ConvivenciaPix.V2.Infrastructure.Signing;
+using ConvivenciaPix.V2.Infrastructure.Simulation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -56,7 +57,7 @@ public static class InfrastructureServiceExtensions
                 : new RedisDeliveryNotifier(redis, sp.GetRequiredService<ILogger<RedisDeliveryNotifier>>());
         });
 
-        AddSpiGateway(services, configuration, environment);
+        AddSpiGateway(services, configuration, environment, inMemory);
         AddSigning(services, configuration, environment);
 
         return services;
@@ -105,10 +106,22 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<ISystemBDocumentRepository, InMemorySystemBDocumentRepository>();
     }
 
-    private static void AddSpiGateway(IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    private static void AddSpiGateway(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment, bool inMemory)
     {
         services.Configure<SpiGatewayOptions>(configuration.GetSection("SpiGateway"));
         services.Configure<DinamoOptions>(configuration.GetSection("Dinamo"));
+
+        if (inMemory)
+        {
+            // No SPI either: forwards and pulls are answered by the simulator inside this process,
+            // whatever SpiGateway:Transport and SpiGateway:BaseUrl say.
+            services.Configure<SimulatorOptions>(configuration.GetSection("Simulator"));
+            services.AddSingleton<SimulatorState>();
+            services.AddSingleton<SpiSimulator>();
+            services.AddSingleton<ISpiGateway, SimulatedSpiGateway>();
+            return;
+        }
 
         var transport = configuration["SpiGateway:Transport"];
         var useHttp = string.IsNullOrWhiteSpace(transport)

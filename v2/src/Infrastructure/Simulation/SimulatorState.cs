@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 
-namespace ConvivenciaPix.V2.BacenSpiSimulator;
+namespace ConvivenciaPix.V2.Infrastructure.Simulation;
 
 public sealed record SimulatedMessage(string PiResourceId, byte[] Body);
 

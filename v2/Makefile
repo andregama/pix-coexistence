@@ -40,7 +40,7 @@ run-api:
 	dotnet run --project src/SpiProxyApi/ConvivenciaPix.V2.SpiProxyApi.csproj
 
 # The whole proxy (API + pull loop) in one process with in-memory storage: no Docker, no SQL
-# Server, Redis or Kafka. Only the simulator has to be running. Nothing survives a restart.
+# Server, Redis or Kafka, and the SPI simulated in process. Nothing survives a restart.
 run-inmemory:
 	dotnet run --project src/SpiProxyApi/ConvivenciaPix.V2.SpiProxyApi.csproj --launch-profile inmemory
 
