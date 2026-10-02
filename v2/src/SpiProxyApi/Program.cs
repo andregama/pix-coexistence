@@ -1,6 +1,7 @@
 using ConvivenciaPix.V2.Application;
 using ConvivenciaPix.V2.Infrastructure;
 using ConvivenciaPix.V2.Infrastructure.Metrics;
+using ConvivenciaPix.V2.Infrastructure.Persistence;
 using ConvivenciaPix.V2.SpiProxyApi.Controllers;
 using ConvivenciaPix.V2.SpiProxyApi.Listeners;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -31,6 +32,12 @@ builder.Services.AddSingleton<ICallerSystemResolver, PortCallerSystemResolver>()
 
 builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
+
+// In-memory storage exists only inside this process, so the API also runs the inbound worker's
+// services: one process with no SQL Server, Redis or Kafka.
+var inMemory = StorageOptions.IsInMemory(builder.Configuration);
+if (inMemory)
+    builder.Services.AddInboundWorker(builder.Configuration);
 
 // A real SPI client may gzip what it sends and expect gzip back.
 builder.Services.AddRequestDecompression();
@@ -68,12 +75,15 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 builder.Services.AddListenerAuthentication(builder.Environment);
 builder.Services.AddAuthorization();
 
-var healthChecks = builder.Services.AddHealthChecks()
-    .AddSqlServer(builder.Configuration.GetConnectionString("SqlServer")!, name: "sqlserver", tags: ["db"]);
-// Redis only carries wake-up notifications: losing it degrades latency, not correctness.
-if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Redis")))
-    healthChecks.AddRedis(
-        builder.Configuration.GetConnectionString("Redis")!, name: "redis", failureStatus: HealthStatus.Degraded, tags: ["notify"]);
+var healthChecks = builder.Services.AddHealthChecks();
+if (!inMemory)
+{
+    healthChecks.AddSqlServer(builder.Configuration.GetConnectionString("SqlServer")!, name: "sqlserver", tags: ["db"]);
+    // Redis only carries wake-up notifications: losing it degrades latency, not correctness.
+    if (!string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Redis")))
+        healthChecks.AddRedis(
+            builder.Configuration.GetConnectionString("Redis")!, name: "redis", failureStatus: HealthStatus.Degraded, tags: ["notify"]);
+}
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService("spi-proxy-api-v2"))

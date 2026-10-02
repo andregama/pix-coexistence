@@ -8,6 +8,18 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
+    },
+    "inmemory": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Storage__Provider": "InMemory",
+        "InboundPull__Enabled": "true",
+        "InboundPull__Ispb": "12345678",
+        "InboundSigning__VerifyBacenSignature": "false"
+      }
     }
   }
 }

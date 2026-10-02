@@ -95,7 +95,7 @@ A chain can be replaced per type in configuration, without code changes:
 | Path | Content |
 |---|---|
 | `src/Domain`, `src/Application` | routing engine, use cases, ports |
-| `src/Infrastructure` | SQL repositories, parser, SPI gateway (HSM / HTTP), Redis notifier, pull loop, outbox, cleanup |
+| `src/Infrastructure` | SQL repositories (and their in-memory stand-ins), parser, SPI gateway (HSM / HTTP), Redis notifier, pull loop, outbox, cleanup |
 | `src/SpiProxyApi` | the three listeners, SPI endpoints, admin API |
 | `src/SpiInboundWorker` | pulls from Bacen, publishes the audit outbox, purges expired rows — run exactly one kind of this host |
 | `tools/BacenSpiSimulator` | stand-in for the real SPI for local runs and tests |
@@ -130,6 +130,25 @@ curl -X POST --data-binary @received-pacs008.xml http://localhost:5290/sim/inbou
 
 Swagger is at `http://localhost:5203/swagger`, metrics at `http://localhost:5203/metrics`. In Development the listeners are plain HTTP without client certificates.
 
+### Without Docker: in-memory storage
+
+For a quick try-out, the proxy runs with no SQL Server, Redis or Kafka:
+
+```bash
+make run-simulator         # fake SPI on :5290
+make run-inmemory          # API + pull loop in one process; same ports as above
+```
+
+`make run-inmemory` starts `SpiProxyApi` with `Storage:Provider=InMemory` (launch profile `inmemory`). In this mode:
+
+- routes, affinities, inbound messages, the delivery queue and the System B registry live in the memory of the API process, behind the same repository interfaces as the SQL ones (`Persistence/InMemory`);
+- the API runs the worker's services itself (pull loop, cleanup), because another process could not see its memory — `SpiInboundWorker` refuses to start with this provider;
+- audit events are written to the log instead of Kafka, and long-poll wake-ups stay in process instead of going through Redis;
+- the registry starts empty: add customers through the admin API;
+- **nothing survives a restart**, so a message acknowledged to the SPI is lost if the process stops. The provider is refused in Production and is meant for the simulator only.
+
+The same curl commands as above work unchanged.
+
 ## Tests
 
 ```bash
@@ -139,13 +158,16 @@ make test
 | Project | Needs Docker | Covers |
 |---|---|---|
 | `Domain.Tests`, `Application.Tests` | no | routing table and resolvers, forward / inbound / pull use cases |
-| `Infrastructure.Tests` | yes (SQL Server) | parser, repositories under concurrency, leases, gateways, pull loop |
-| `Integration.Tests` | yes (SQL Server, Redis) | API + worker + simulator end to end |
+| `Infrastructure.Tests` | yes (SQL Server) | parser, repositories under concurrency, leases, gateways, pull loop; the in-memory provider (`InMemoryStorageTests`, no Docker) |
+| `Integration.Tests` | yes (SQL Server, Redis) | API + worker + simulator end to end; `InMemoryProxyTests` runs the in-memory mode (no Docker) |
+
+The Docker-free subset: `dotnet test ConvivenciaPix.V2.sln --filter "FullyQualifiedName~InMemory"`.
 
 ## Configuration
 
 | Section | Keys |
 |---|---|
+| `Storage` | `Provider`: `SqlServer` (default) or `InMemory` (single process, no SQL Server / Redis / Kafka; refused in Production) |
 | `ConnectionStrings` | `SqlServer` (the one database: proxy tables + `TB_DADOS_CONVIVENCIA`), `Redis` (optional) |
 | `Listeners` | `SystemAPort`, `SystemBPort`, `AdminPort`, `Https`, `Certificate:{Path,Password}`, `{SystemA,SystemB,Admin}:TrustedThumbprints` |
 | `Spi` | `Ispb` — when set, any other ISPB in the URL is refused |

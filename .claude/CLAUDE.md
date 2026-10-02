@@ -61,7 +61,8 @@ A message that fails signature verification or is not XML is **quarantined**: st
 * **Never acknowledge to Bacen before the message is stored**, and never deliver content that has not been signed by the bank's HSM.
 * **Bytes, not strings**, for message payloads end to end.
 * **Outbound is pass-through.** The proxy does not sign what systems send.
-* **Commands** (from `v2/`): `make infra-up`, `make migrate`, `make migrate-dev-registry`, `make test`, `make run-simulator | run-api | run-worker`. Infrastructure and Integration tests need Docker.
+* **In-memory mode is for quick local runs only.** `Storage:Provider=InMemory` (`make run-inmemory`) runs the API and the worker's services in one process with no SQL Server, Redis or Kafka: storage is `Persistence/InMemory`, audit events go to the log. Nothing survives a restart and it is refused in Production. A change to a repository interface must be made in both the SQL and the in-memory implementation.
+* **Commands** (from `v2/`): `make infra-up`, `make migrate`, `make migrate-dev-registry`, `make test`, `make run-simulator | run-api | run-worker | run-inmemory`. Infrastructure and Integration tests need Docker, except the `InMemory*` test classes.
 
 ## Known limits
 

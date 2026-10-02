@@ -1,4 +1,4 @@
-.PHONY: infra-up infra-down migrate migrate-dev-registry build test lint run-api run-worker run-simulator
+.PHONY: infra-up infra-down migrate migrate-dev-registry build test lint run-api run-worker run-simulator run-inmemory
 
 SQL_USER     ?= sa
 SQL_PASSWORD ?= Dev@Strong123
@@ -38,6 +38,11 @@ run-simulator:
 
 run-api:
 	dotnet run --project src/SpiProxyApi/ConvivenciaPix.V2.SpiProxyApi.csproj
+
+# The whole proxy (API + pull loop) in one process with in-memory storage: no Docker, no SQL
+# Server, Redis or Kafka. Only the simulator has to be running. Nothing survives a restart.
+run-inmemory:
+	dotnet run --project src/SpiProxyApi/ConvivenciaPix.V2.SpiProxyApi.csproj --launch-profile inmemory
 
 run-worker:
 	dotnet run --project src/SpiInboundWorker/ConvivenciaPix.V2.SpiInboundWorker.csproj

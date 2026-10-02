@@ -10,6 +10,7 @@ using ConvivenciaPix.V2.Infrastructure.Metrics;
 using ConvivenciaPix.V2.Infrastructure.Notifications;
 using ConvivenciaPix.V2.Infrastructure.Parsing;
 using ConvivenciaPix.V2.Infrastructure.Persistence;
+using ConvivenciaPix.V2.Infrastructure.Persistence.InMemory;
 using ConvivenciaPix.V2.Infrastructure.Registry;
 using ConvivenciaPix.V2.Infrastructure.Signing;
 using Microsoft.Extensions.Configuration;
@@ -27,16 +28,16 @@ public static class InfrastructureServiceExtensions
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
-        services.AddSingleton(sp => new CoexistenceDb(RequiredConnectionString(sp, "SqlServer")));
+        var inMemory = StorageOptions.IsInMemory(configuration);
+        if (inMemory && environment.IsProduction())
+            throw new InvalidOperationException("Storage:Provider=InMemory is not allowed in Production: nothing would survive a restart.");
 
-        services.AddSingleton<ISentRouteRepository, SentRouteRepository>();
-        services.AddSingleton<ITxAffinityRepository, TxAffinityRepository>();
-        services.AddSingleton<IInboundMessageRepository, InboundMessageRepository>();
-        services.AddSingleton<IDeliveryQueue, DeliveryQueue>();
-        services.AddSingleton<IAuditOutboxRepository, AuditOutboxRepository>();
+        if (inMemory)
+            AddInMemoryStorage(services);
+        else
+            AddSqlStorage(services);
 
         services.Configure<RegistryOptions>(configuration.GetSection("Registry"));
-        services.AddSingleton<ISystemBDocumentRepository, SystemBDocumentRepository>();
         services.AddSingleton<ISystemBDocumentRegistry, SystemBDocumentRegistry>();
         services.AddHostedService<RegistryRefreshService>();
 
@@ -46,10 +47,11 @@ public static class InfrastructureServiceExtensions
         services.AddSingleton<ProxyMetrics>();
         services.AddSingleton<IProxyMetrics>(sp => sp.GetRequiredService<ProxyMetrics>());
 
+        // In memory there is a single process, so there is nobody to notify through Redis.
         services.AddSingleton<IDeliveryNotifier>(sp =>
         {
             var redis = sp.GetRequiredService<IConfiguration>().GetConnectionString("Redis");
-            return string.IsNullOrWhiteSpace(redis)
+            return inMemory || string.IsNullOrWhiteSpace(redis)
                 ? new InMemoryDeliveryNotifier()
                 : new RedisDeliveryNotifier(redis, sp.GetRequiredService<ILogger<RedisDeliveryNotifier>>());
         });
@@ -68,10 +70,39 @@ public static class InfrastructureServiceExtensions
         services.Configure<CleanupOptions>(configuration.GetSection("Cleanup"));
 
         services.AddHostedService<BacenPullService>();
-        services.AddHostedService<OutboxPublisherService>();
+        if (StorageOptions.IsInMemory(configuration))
+            services.AddHostedService<LogAuditPublisherService>();
+        else
+            services.AddHostedService<OutboxPublisherService>();
         services.AddHostedService<CleanupService>();
 
         return services;
+    }
+
+    private static void AddSqlStorage(IServiceCollection services)
+    {
+        services.AddSingleton(sp => new CoexistenceDb(RequiredConnectionString(sp, "SqlServer")));
+
+        services.AddSingleton<ISentRouteRepository, SentRouteRepository>();
+        services.AddSingleton<ITxAffinityRepository, TxAffinityRepository>();
+        services.AddSingleton<IInboundMessageRepository, InboundMessageRepository>();
+        services.AddSingleton<IDeliveryQueue, DeliveryQueue>();
+        services.AddSingleton<IAuditOutboxRepository, AuditOutboxRepository>();
+        services.AddSingleton<ISystemBDocumentRepository, SystemBDocumentRepository>();
+    }
+
+    // Same contracts over the memory of this process: the API and the pull loop must share a host.
+    private static void AddInMemoryStorage(IServiceCollection services)
+    {
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<InMemoryStore>();
+
+        services.AddSingleton<ISentRouteRepository, InMemorySentRouteRepository>();
+        services.AddSingleton<ITxAffinityRepository, InMemoryTxAffinityRepository>();
+        services.AddSingleton<IInboundMessageRepository, InMemoryInboundMessageRepository>();
+        services.AddSingleton<IDeliveryQueue, InMemoryDeliveryQueue>();
+        services.AddSingleton<IAuditOutboxRepository, InMemoryAuditOutboxRepository>();
+        services.AddSingleton<ISystemBDocumentRepository, InMemorySystemBDocumentRepository>();
     }
 
     private static void AddSpiGateway(IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)

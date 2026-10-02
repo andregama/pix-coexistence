@@ -1,6 +1,7 @@
 using ConvivenciaPix.V2.Application;
 using ConvivenciaPix.V2.Infrastructure;
 using ConvivenciaPix.V2.Infrastructure.Metrics;
+using ConvivenciaPix.V2.Infrastructure.Persistence;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -9,6 +10,9 @@ using OpenTelemetry.Resources;
 // System A and/or System B and stores it in their delivery queues. Also publishes the audit outbox
 // and purges expired rows.
 var builder = Host.CreateApplicationBuilder(args);
+if (StorageOptions.IsInMemory(builder.Configuration))
+    throw new InvalidOperationException(
+        "Storage:Provider=InMemory keeps everything inside the API process, which then runs the worker's services itself. Run only SpiProxyApi.");
 builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddInboundWorker(builder.Configuration);
