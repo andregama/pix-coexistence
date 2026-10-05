@@ -25,6 +25,16 @@ public interface ISpiXmlParser
     string? ExtractTransactionStatus(string xml);
 
     /// <summary>
+    /// Returns the CPF/CNPJ of the bank's own customer in the message (punctuation removed,
+    /// upper-cased), or null when the message names no such party. The customer is the party
+    /// (<c>Dbtr</c>/<c>Cdtr</c>, <c>Id/PrvtId|OrgId/Othr/Id</c>) whose agent is the bank:
+    /// pacs.008 → <c>Dbtr</c> when <paramref name="sentByBank"/>, <c>Cdtr</c> otherwise; other
+    /// types → the party whose <c>DbtrAgt</c>/<c>CdtrAgt</c> ISPB is the bank's ISPB in the
+    /// AppHdr (<c>Fr</c> when sent by the bank, <c>To</c> when received).
+    /// </summary>
+    string? ExtractCustomerDocument(string xml, string msgType, bool sentByBank);
+
+    /// <summary>
     /// Returns the message-level idempotency key as defined in Catálogo de Serviços do SFN v5.12:
     /// pacs.008 → CdtTrfTxInf/PmtId/EndToEndId,
     /// pacs.002 → TxInfAndSts/OrgnlEndToEndId,

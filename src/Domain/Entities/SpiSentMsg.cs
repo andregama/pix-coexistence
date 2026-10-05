@@ -19,6 +19,8 @@ public sealed class SpiSentMsg
     public string? TxStatus { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
+    /// <summary>CPF/CNPJ of the bank's customer in the message (see ISpiXmlParser.ExtractCustomerDocument). Null when the message names none.</summary>
+    public string? CustomerDocument { get; private set; }
     public DateTime CreatedAt { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
 
@@ -86,5 +88,12 @@ public sealed class SpiSentMsg
     {
         if (TxStatus is null && !string.IsNullOrWhiteSpace(txStatus))
             TxStatus = txStatus;
+    }
+
+    /// <summary>First-wins: records the bank customer's CPF/CNPJ parsed from the message XML.</summary>
+    public void SetCustomerDocument(string? customerDocument)
+    {
+        if (CustomerDocument is null && !string.IsNullOrWhiteSpace(customerDocument))
+            CustomerDocument = customerDocument;
     }
 }

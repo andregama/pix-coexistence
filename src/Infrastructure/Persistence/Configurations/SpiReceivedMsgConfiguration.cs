@@ -31,6 +31,7 @@ public sealed class SpiReceivedMsgConfiguration : IEntityTypeConfiguration<SpiRe
         builder.Property(x => x.WithdrawalAmount).HasColumnType("DECIMAL(18,2)");
         builder.Property(x => x.TxStatus).HasColumnType("VARCHAR(10)");
         builder.Property(x => x.CorrelationSource).HasColumnType("VARCHAR(20)");
+        builder.Property(x => x.CustomerDocument).HasColumnType("VARCHAR(14)");
         builder.Property(x => x.PiResourceId).HasColumnType("VARCHAR(255)");
         builder.Property(x => x.ConsumedAt).HasColumnType("DATETIME2");
         builder.Property(x => x.CreatedAt).HasColumnType("DATETIME2").IsRequired();

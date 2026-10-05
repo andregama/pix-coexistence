@@ -504,4 +504,96 @@ public sealed class SpiXmlParserTests
             "<OrgnlEndToEndId>E2E-ORIG-013</OrgnlEndToEndId></OrgnlGrpInfAndSts>");
         _parser.ExtractOriginalIdempotentId(xml, "pain.014").Should().Be("E2E-ORIG-013");
     }
+
+    // --- Customer document (CPF/CNPJ of the bank's own customer) -----------------------------------
+
+    private const string BankIspb = "11111111";
+    private const string OtherIspb = "22222222";
+
+    private static string Party(string role, string document, string idKind = "PrvtId") =>
+        $"<{role}><Nm>Nome</Nm><Id><{idKind}><Othr><Id>{document}</Id></Othr></{idKind}></Id></{role}>";
+
+    private static string Agent(string role, string ispb) =>
+        $"<{role}Agt><FinInstnId><ClrSysMmbId><MmbId>{ispb}</MmbId></ClrSysMmbId></FinInstnId></{role}Agt>";
+
+    private static string BuildAddressed(string family, string businessElement, string fr, string to, string body) => $"""
+        <Envelope xmlns="https://www.bcb.gov.br/pi/{family}/1.0">
+          <AppHdr>
+            <Fr><FIId><FinInstnId><Othr><Id>{fr}</Id></Othr></FinInstnId></FIId></Fr>
+            <To><FIId><FinInstnId><Othr><Id>{to}</Id></Othr></FinInstnId></FIId></To>
+            <BizMsgIdr>M{fr}00000000000000000000001</BizMsgIdr>
+            <MsgDefIdr>{family}.spi.1.0</MsgDefIdr>
+          </AppHdr>
+          <Document><{businessElement}>{body}</{businessElement}></Document>
+        </Envelope>
+        """;
+
+    private static string BuildPacs008WithParties(string debtorDocument, string creditorDocument) =>
+        BuildAddressed("pacs.008", "FIToFICstmrCdtTrf", BankIspb, OtherIspb,
+            "<CdtTrfTxInf><PmtId><EndToEndId>E1</EndToEndId></PmtId>" +
+            Party("Dbtr", debtorDocument) + Agent("Dbtr", BankIspb) +
+            Agent("Cdtr", OtherIspb) + Party("Cdtr", creditorDocument, "OrgId") +
+            "</CdtTrfTxInf>");
+
+    [Fact]
+    public void ExtractCustomerDocument_Pacs008Sent_ReturnsDebtor()
+    {
+        var xml = BuildPacs008WithParties("700.000.000-00", "12.345.678/0001-90");
+        _parser.ExtractCustomerDocument(xml, "pacs.008", sentByBank: true).Should().Be("70000000000");
+    }
+
+    [Fact]
+    public void ExtractCustomerDocument_Pacs008Received_ReturnsCreditor()
+    {
+        var xml = BuildPacs008WithParties("70000000000", "12.ABC.345/01DE-35");
+        _parser.ExtractCustomerDocument(xml, "pacs.008", sentByBank: false).Should().Be("12ABC34501DE35");
+    }
+
+    [Fact]
+    public void ExtractCustomerDocument_Pacs008MultipleTransactions_ReadsFirst()
+    {
+        var xml = BuildAddressed("pacs.008", "FIToFICstmrCdtTrf", OtherIspb, BankIspb,
+            "<CdtTrfTxInf>" + Party("Dbtr", "1") + Party("Cdtr", "80000000001") + "</CdtTrfTxInf>" +
+            "<CdtTrfTxInf>" + Party("Dbtr", "2") + Party("Cdtr", "80000000002") + "</CdtTrfTxInf>");
+        _parser.ExtractCustomerDocument(xml, "pacs.008", sentByBank: false).Should().Be("80000000001");
+    }
+
+    [Theory]
+    [InlineData(false, "80000000000")] // received from the creditor's PSP: our customer is the payer
+    [InlineData(true, null)]           // sent by the bank but neither agent is ours
+    public void ExtractCustomerDocument_Pain009_ReturnsPartyWhoseAgentIsTheBank(bool sentByBank, string? expected)
+    {
+        var mandate = "<Mndt>" + Party("Cdtr", "90000000000", "OrgId") + Agent("Cdtr", OtherIspb) +
+                      Party("Dbtr", "80000000000") + Agent("Dbtr", BankIspb) + "</Mndt>";
+        var xml = sentByBank
+            ? BuildAddressed("pain.009", "MndtInitnReq", "33333333", OtherIspb, mandate.Replace(BankIspb, "44444444"))
+            : BuildAddressed("pain.009", "MndtInitnReq", OtherIspb, BankIspb, mandate);
+        _parser.ExtractCustomerDocument(xml, "pain.009", sentByBank).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ExtractCustomerDocument_Pain012Sent_ReturnsDebtorOfOriginalMandate()
+    {
+        var xml = BuildAddressed("pain.012", "MndtAccptncRpt", BankIspb, OtherIspb,
+            "<UndrlygAccptncDtls><OrgnlMndt><OrgnlMndt>" +
+            Party("Cdtr", "90000000000", "OrgId") + Agent("Cdtr", OtherIspb) +
+            Party("Dbtr", "80000000000") + Agent("Dbtr", BankIspb) +
+            "</OrgnlMndt></OrgnlMndt></UndrlygAccptncDtls>");
+        _parser.ExtractCustomerDocument(xml, "pain.012", sentByBank: true).Should().Be("80000000000");
+    }
+
+    [Fact]
+    public void ExtractCustomerDocument_NoParties_ReturnsNull()
+    {
+        var xml = BuildSpiEnvelope("pacs.002", "1.17", "FIToFIPmtStsRpt",
+            "<TxInfAndSts><OrgnlEndToEndId>E2E-1</OrgnlEndToEndId><TxSts>ACSP</TxSts></TxInfAndSts>");
+        _parser.ExtractCustomerDocument(xml, "pacs.002", sentByBank: false).Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractCustomerDocument_LongerThanCnpj_ReturnsNull()
+    {
+        var xml = BuildPacs008WithParties("123456789012345", "80000000000");
+        _parser.ExtractCustomerDocument(xml, "pacs.008", sentByBank: true).Should().BeNull();
+    }
 }

@@ -108,4 +108,18 @@ public sealed class CorrelateSystemBOutboundUseCaseTests
 
         _sentRepoMock.Verify(r => r.UpsertSystemBAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_SetsCustomerDocument_AsSentByBank()
+    {
+        _xmlParserMock.Setup(p => p.ExtractCustomerDocument(It.IsAny<string>(), "pacs.008", true)).Returns("70000000000");
+        SpiSentMsg? passed = null;
+        _sentRepoMock.Setup(r => r.UpsertSystemBAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiSentMsg, CancellationToken>((m, _) => passed = m)
+            .ReturnsAsync((SpiSentMsg m, CancellationToken _) => new UpsertOutcome<SpiSentMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(Envelope, AllowedTypes, CancellationToken.None);
+
+        passed!.CustomerDocument.Should().Be("70000000000");
+    }
 }

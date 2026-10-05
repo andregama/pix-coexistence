@@ -80,6 +80,7 @@ public sealed class CorrelateSystemAInboundUseCase : ICorrelateSystemAInboundUse
         var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(mapped.XmlMsg, msgType);
         receivedA.SetAmounts(transferAmount, withdrawalAmount);
         receivedA.SetTxStatus(txStatus);
+        receivedA.SetCustomerDocument(_xmlParser.ExtractCustomerDocument(mapped.XmlMsg, msgType, sentByBank: false));
         var (_, insertedReceived) = await _receivedMsgRepo.UpsertSystemAAsync(receivedA, ct);
         if (insertedReceived)
             _metrics.RecordCorrelationSource(correlationSource);

@@ -18,6 +18,8 @@ public sealed class SpiReceivedMsg
     public string? TxStatus { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
+    /// <summary>CPF/CNPJ of the bank's customer in the message (see ISpiXmlParser.ExtractCustomerDocument). Null when the message names none.</summary>
+    public string? CustomerDocument { get; private set; }
     /// <summary>Outbound-stream resource id assigned when the signed message is enqueued for System B to pull.</summary>
     public string? PiResourceId { get; private set; }
     /// <summary>UTC time System B pulled + acked this message. Null until consumed. See <see cref="MarkConsumed"/>.</summary>
@@ -109,6 +111,13 @@ public sealed class SpiReceivedMsg
     {
         if (TxStatus is null && !string.IsNullOrWhiteSpace(txStatus))
             TxStatus = txStatus;
+    }
+
+    /// <summary>First-wins: records the bank customer's CPF/CNPJ parsed from the message XML.</summary>
+    public void SetCustomerDocument(string? customerDocument)
+    {
+        if (CustomerDocument is null && !string.IsNullOrWhiteSpace(customerDocument))
+            CustomerDocument = customerDocument;
     }
 
     /// <summary>Records the outbound-stream resource id assigned when the signed XML is enqueued for System B.</summary>

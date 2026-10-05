@@ -29,6 +29,7 @@ public sealed class SpiSentMsgRepository : ISpiSentMsgRepository
                 .SetProperty(x => x.SystemAErrorCode, msg.SystemAErrorCode)
                 .SetProperty(x => x.OriginalMsgIdempotentId, x => x.OriginalMsgIdempotentId ?? msg.OriginalMsgIdempotentId)
                 .SetProperty(x => x.CorrelationSource, x => x.CorrelationSource ?? msg.CorrelationSource)
+                .SetProperty(x => x.CustomerDocument, x => x.CustomerDocument ?? msg.CustomerDocument)
                 .SetProperty(x => x.TransferAmount, x => x.TransferAmount ?? msg.TransferAmount)
                 .SetProperty(x => x.WithdrawalAmount, x => x.WithdrawalAmount ?? msg.WithdrawalAmount)
                 .SetProperty(x => x.TxStatus, x => x.TxStatus ?? msg.TxStatus)
@@ -43,6 +44,7 @@ public sealed class SpiSentMsgRepository : ISpiSentMsgRepository
                 .SetProperty(x => x.SystemBErrorCode, msg.SystemBErrorCode)
                 .SetProperty(x => x.OriginalMsgIdempotentId, x => x.OriginalMsgIdempotentId ?? msg.OriginalMsgIdempotentId)
                 .SetProperty(x => x.CorrelationSource, x => x.CorrelationSource ?? msg.CorrelationSource)
+                .SetProperty(x => x.CustomerDocument, x => x.CustomerDocument ?? msg.CustomerDocument)
                 .SetProperty(x => x.TransferAmount, x => x.TransferAmount ?? msg.TransferAmount)
                 .SetProperty(x => x.WithdrawalAmount, x => x.WithdrawalAmount ?? msg.WithdrawalAmount)
                 .SetProperty(x => x.UpdatedAt, msg.UpdatedAt), cancellationToken),

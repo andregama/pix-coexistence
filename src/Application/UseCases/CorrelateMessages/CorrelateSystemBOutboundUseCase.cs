@@ -61,6 +61,7 @@ public sealed class CorrelateSystemBOutboundUseCase : ICorrelateSystemBOutboundU
         msg.SetCorrelationSource(correlationSource);
         var (transferAmount, withdrawalAmount) = _xmlParser.ExtractAmounts(rawXml, msgType);
         msg.SetAmounts(transferAmount, withdrawalAmount);
+        msg.SetCustomerDocument(_xmlParser.ExtractCustomerDocument(rawXml, msgType, sentByBank: true));
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 

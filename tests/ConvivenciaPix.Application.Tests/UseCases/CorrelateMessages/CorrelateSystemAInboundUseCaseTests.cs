@@ -497,4 +497,23 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         upserted!.TxStatus.Should().Be("RJCT");
         upserted.SystemAErrorCode.Should().Be(ConvivenciaPix.Application.Common.SpiErrorCodes.RejectedTransfer);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_SetsCustomerDocument_AsReceivedByBank()
+    {
+        var allowed = new HashSet<string> { "pacs.008" };
+        var cdc = JsonSerializer.Serialize(new { after = new { XmlMsg = "<pacs008-incoming/>", Problem = (string?)null } });
+        _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.008");
+        _xmlParserMock.Setup(p => p.ExtractCorrelationKey(It.IsAny<string>(), "pacs.008")).Returns("E2E-INCOMING");
+        _xmlParserMock.Setup(p => p.GetCorrelationSource("pacs.008")).Returns("MessageKey");
+        _xmlParserMock.Setup(p => p.ExtractCustomerDocument("<pacs008-incoming/>", "pacs.008", false)).Returns("80000000000");
+        SpiReceivedMsg? passed = null;
+        _receivedRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiReceivedMsg, CancellationToken>((m, _) => passed = m)
+            .ReturnsAsync((SpiReceivedMsg m, CancellationToken _) => new UpsertOutcome<SpiReceivedMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(cdc, Types(allowed: allowed, primary: allowed), CancellationToken.None);
+
+        passed!.CustomerDocument.Should().Be("80000000000");
+    }
 }
