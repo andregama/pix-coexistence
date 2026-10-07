@@ -6,6 +6,8 @@ public interface ISpiMetrics
     void RecordProxyResponseLatency(double milliseconds);
     void RecordDiscrepancy(string field);
     void RecordDlqMessage(string topic);
+    void RecordDlqRetry(string topic, string outcome);
+    void RecordUncorrelatedReplication(string msgType);
     void RecordDictProxyLatency(double milliseconds);
     void RecordDictUpstreamStatus(int statusCode);
 }

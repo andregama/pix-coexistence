@@ -53,6 +53,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SpiAmountBackfill", "SpiAmo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConvivenciaPix.SpiAmountBackfill", "tools\SpiAmountBackfill\ConvivenciaPix.SpiAmountBackfill.csproj", "{4DC46D47-9A57-438A-852D-E59F5FF00100}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConvivenciaPix.SpiDlqRetryWorker", "src\SpiDlqRetryWorker\ConvivenciaPix.SpiDlqRetryWorker.csproj", "{CAD68E6C-3349-435B-8AA0-020D88880326}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -231,6 +233,18 @@ Global
 		{4DC46D47-9A57-438A-852D-E59F5FF00100}.Release|x64.Build.0 = Release|Any CPU
 		{4DC46D47-9A57-438A-852D-E59F5FF00100}.Release|x86.ActiveCfg = Release|Any CPU
 		{4DC46D47-9A57-438A-852D-E59F5FF00100}.Release|x86.Build.0 = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|x64.Build.0 = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Debug|x86.Build.0 = Debug|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|x64.ActiveCfg = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|x64.Build.0 = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|x86.ActiveCfg = Release|Any CPU
+		{CAD68E6C-3349-435B-8AA0-020D88880326}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -258,5 +272,6 @@ Global
 		{510C9DB7-D842-4297-8271-1C936D1EFC8B} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{B2CC94B1-D058-EF5B-F6F5-737A4758B998} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{4DC46D47-9A57-438A-852D-E59F5FF00100} = {B2CC94B1-D058-EF5B-F6F5-737A4758B998}
+		{CAD68E6C-3349-435B-8AA0-020D88880326} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

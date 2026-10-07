@@ -35,3 +35,6 @@ run-api:
 
 run-dict-api:
 	dotnet run --project src/DictProxyApi/ConvivenciaPix.DictProxyApi.csproj
+
+run-dlq-retry:
+	dotnet run --project src/SpiDlqRetryWorker/ConvivenciaPix.SpiDlqRetryWorker.csproj

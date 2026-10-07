@@ -450,18 +450,35 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Throws_WhenSentMsgIncomplete()
+    public async Task ExecuteAsync_Pacs002_SystemAOnly_ReplicatesUnchanged_WithoutThrowing()
     {
-        var incomplete = SpiSentMsg.Create("E2E-A", "pacs.008");
-        incomplete.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null); // B side missing
+        var systemAOnly = SpiSentMsg.Create("E2E-A", "pacs.008");
+        systemAOnly.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null); // B side never arrives
 
         _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync((SpiReceivedMsg?)null);
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(incomplete);
+            .ReturnsAsync(systemAOnly);
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
 
         await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().NotThrowAsync("System A's side is known, so the response must not be dead-lettered");
+
+        // System B's side is waited for up to MaxAttempts (3) before replicating without it.
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+        _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>()),
+            Times.Never);
+        _metricsMock.Verify(m => m.RecordUncorrelatedReplication("pacs.002"), Times.Once);
+        published.Should().NotBeNull();
+        JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
+            .TransformedXml.Should().Be("<pacs002/>");
     }
 
     [Fact]

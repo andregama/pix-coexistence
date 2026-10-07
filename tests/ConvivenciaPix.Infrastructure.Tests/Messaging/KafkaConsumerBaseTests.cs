@@ -1,9 +1,12 @@
 using Confluent.Kafka;
 using ConvivenciaPix.Application.Interfaces;
 using ConvivenciaPix.Infrastructure.Messaging;
+using ConvivenciaPix.Infrastructure.Messaging.Dlq;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Text;
 using Xunit;
 
 namespace ConvivenciaPix.Infrastructure.Tests.Messaging;
@@ -81,6 +84,40 @@ public sealed class KafkaConsumerBaseTests
             It.IsAny<CancellationToken>()), Times.Once, "a failed message must be dead-lettered");
         consumer.Verify(c => c.Commit(result), Times.Once,
             "the offset must advance past a dead-lettered message so it is not reprocessed on restart");
+    }
+
+    [Fact]
+    public async Task RetriedMessage_FailingAgain_KeepsRetryCount_AndReplacesOldDlqHeaders()
+    {
+        // A message put back by the DLQ retry worker carries dlq.retry.count; it may also carry
+        // dlq.* headers of an earlier failure.
+        var result = Message(offset: 8);
+        result.Message.Headers.Add("correlation-id", Encoding.UTF8.GetBytes("abc"));
+        result.Message.Headers.Add(DlqHeaders.RetryCount, DlqHeaders.EncodeRetryCount(2));
+        result.Message.Headers.Add(DlqHeaders.ExceptionType, Encoding.UTF8.GetBytes("Old.Exception"));
+        result.Message.Headers.Add(DlqHeaders.SourceTopic, Encoding.UTF8.GetBytes("old-topic"));
+
+        using var cts = new CancellationTokenSource();
+        var consumer = ConsumerReturningOnce(result, cts);
+        Message<string, string>? deadLettered = null;
+        var dlq = new Mock<IProducer<string, string>>();
+        dlq.Setup(p => p.ProduceAsync(It.IsAny<string>(), It.IsAny<Message<string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, Message<string, string>, CancellationToken>((_, m, _) => deadLettered = m)
+            .ReturnsAsync(new DeliveryResult<string, string>());
+
+        var sut = new TestConsumer(consumer.Object, dlq.Object,
+            _ => throw new InvalidOperationException("boom"));
+        await sut.RunAsync(cts.Token);
+
+        deadLettered.Should().NotBeNull();
+        var headers = deadLettered!.Headers;
+        DlqHeaders.GetRetryCount(headers).Should().Be(2);
+        DlqHeaders.GetString(headers, "correlation-id").Should().Be("abc");
+        headers.Count(h => h.Key == DlqHeaders.ExceptionType).Should().Be(1);
+        DlqHeaders.GetString(headers, DlqHeaders.ExceptionType).Should().Be(typeof(InvalidOperationException).FullName);
+        headers.Count(h => h.Key == DlqHeaders.SourceTopic).Should().Be(1);
+        DlqHeaders.GetString(headers, DlqHeaders.SourceTopic).Should().Be(Topic);
     }
 
     [Fact]

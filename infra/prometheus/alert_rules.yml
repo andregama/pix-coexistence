@@ -10,6 +10,14 @@ groups:
           summary: "SPI DLQ message rate is elevated"
           description: "More than 1 message per second is being routed to DLQ topics"
 
+      - alert: SpiDlqRetriesExhausted
+        expr: sum by (topic) (increase(spi_dlq_retries_total{outcome="exhausted"}[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "SPI DLQ messages gave up retrying"
+          description: "Messages on {{ $labels.topic }} reached the retry limit (or failed with a non-retryable error) and were not reprocessed"
+
       - alert: SpiHeuristicFallbackHigh
         expr: |
           rate(spi_correlation_source_total{source="Heuristic"}[10m])
