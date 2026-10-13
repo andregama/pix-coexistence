@@ -514,4 +514,27 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         upserted!.TxStatus.Should().Be("RJCT");
         upserted.SystemAErrorCode.Should().Be(ConvivenciaPix.Application.Common.SpiErrorCodes.RejectedTransfer);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_SetsParsedCustomerAccount_AsReceived()
+    {
+        _xmlParserMock.Setup(p => p.ExtractCustomerAccount(It.IsAny<string>(), It.IsAny<string>(), false))
+            .Returns(("4000", "600000", "20000000"));
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CompleteSentMsg());
+        _transformerMock.Setup(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns("<x/>");
+
+        SpiReceivedMsg? upserted = null;
+        _receivedRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiReceivedMsg, CancellationToken>((m, _) => upserted = m)
+            .ReturnsAsync((SpiReceivedMsg m, CancellationToken _) => new UpsertOutcome<SpiReceivedMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
+
+        upserted.Should().NotBeNull();
+        upserted!.CustomerBranch.Should().Be("4000");
+        upserted.CustomerAccount.Should().Be("600000");
+        upserted.Ispb.Should().Be("20000000");
+    }
 }

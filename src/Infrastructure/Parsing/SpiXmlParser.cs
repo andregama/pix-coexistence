@@ -112,6 +112,42 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
             "//*[local-name()='TxSts']");
     }
 
+    public (string? Branch, string? Account, string? Ispb) ExtractCustomerAccount(string xml, string msgType, bool sent)
+    {
+        var (doc, ns) = Load(xml);
+        var debtorIspb = SelectText(doc, ns, AgentIspbXPath("Dbtr"));
+        var creditorIspb = SelectText(doc, ns, AgentIspbXPath("Cdtr"));
+
+        // The bank is the AppHdr sender of what it sends and the recipient of what it receives; its
+        // customer is on the side whose agent carries that ISPB. That holds for every family, including
+        // the Pix Automático ones (pain.009/011/012), which a PSP exchanges as either payer or receiver.
+        var ownIspb = SelectText(doc, ns,
+            $"//*[local-name()='AppHdr']/*[local-name()='{(sent ? "Fr" : "To")}']" +
+            "//*[local-name()='Othr']/*[local-name()='Id']");
+        var debtorIsOwn = ownIspb is not null && ownIspb == debtorIspb;
+        var creditorIsOwn = ownIspb is not null && ownIspb == creditorIspb;
+
+        // Header matches neither agent (or both): fall back on the direction — the bank pays what it
+        // sends and is paid what it receives. pacs.004 carries the agents of the returned payment
+        // (OrgnlTxRef), so there the bank returning the money is the original creditor agent.
+        var customerIsDebtor = debtorIsOwn != creditorIsOwn
+            ? debtorIsOwn
+            : sent != (msgType == "pacs.004");
+
+        var side = customerIsDebtor ? "Dbtr" : "Cdtr";
+        var accountXPath = $"//*[local-name()='{side}Acct']/*[local-name()='Id']/*[local-name()='Othr']";
+        return (
+            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Issr']")),
+            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Id']")),
+            NullIfEmpty(customerIsDebtor ? debtorIspb : creditorIspb));
+    }
+
+    private static string AgentIspbXPath(string side) =>
+        $"//*[local-name()='{side}Agt']/*[local-name()='FinInstnId']" +
+        "/*[local-name()='ClrSysMmbId']/*[local-name()='MmbId']";
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
     public string ExtractPayerId(string xml)
     {
         var (doc, ns) = Load(xml);

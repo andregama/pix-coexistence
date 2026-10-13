@@ -27,6 +27,9 @@ public sealed class SpiReceivedMsgRepository : ISpiReceivedMsgRepository
                 .SetProperty(x => x.TransferAmount, x => x.TransferAmount ?? msg.TransferAmount)
                 .SetProperty(x => x.WithdrawalAmount, x => x.WithdrawalAmount ?? msg.WithdrawalAmount)
                 .SetProperty(x => x.TxStatus, x => x.TxStatus ?? msg.TxStatus)
+                .SetProperty(x => x.CustomerBranch, x => x.CustomerBranch ?? msg.CustomerBranch)
+                .SetProperty(x => x.CustomerAccount, x => x.CustomerAccount ?? msg.CustomerAccount)
+                .SetProperty(x => x.Ispb, x => x.Ispb ?? msg.Ispb)
                 .SetProperty(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken),
             cancellationToken);
 

@@ -11,6 +11,18 @@ public interface ISpiXmlParser
     /// <c>Transfer</c> is the full settlement amount. Non-payment message types return (0, 0).
     /// </summary>
     (decimal Transfer, decimal Withdrawal) ExtractAmounts(string xml, string msgType);
+
+    /// <summary>
+    /// Extracts the account of the bank's own customer in the message: branch
+    /// (<c>&lt;side&gt;Acct/Id/Othr/Issr</c>), account number (<c>&lt;side&gt;Acct/Id/Othr/Id</c>) and the
+    /// ISPB of the participant holding it (<c>&lt;side&gt;Agt/FinInstnId/ClrSysMmbId/MmbId</c>).
+    /// The customer's side (Dbtr or Cdtr) is the one whose agent is the bank — the AppHdr sender for a
+    /// sent message (<paramref name="sent"/> true), the AppHdr recipient for a received one. When the
+    /// header settles nothing, the side follows the direction: debtor when sent and creditor when
+    /// received (inverted for pacs.004, whose agents are those of the returned payment).
+    /// Each value is null when the message does not carry it.
+    /// </summary>
+    (string? Branch, string? Account, string? Ispb) ExtractCustomerAccount(string xml, string msgType, bool sent);
     string ExtractPayerId(string xml);
     string ExtractPayeeId(string xml);
     DateTimeOffset ExtractTimestamp(string xml);

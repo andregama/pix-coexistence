@@ -130,6 +130,7 @@ public sealed class SpiReceivedMsgRepositoryTests : IClassFixture<SqlServerFixtu
 
         var credit = SpiReceivedMsg.CreateFromSystemA(id, "pacs.008", "MSG-" + id, "<pacs008/>", errorCode: null);
         credit.SetAmounts(123.45m, 0m);
+        credit.SetCustomerAccount("4000", "600000", "20000000");
         (await CreateRepo().UpsertSystemAAsync(credit)).Inserted.Should().BeTrue();
 
         var response = SpiReceivedMsg.CreateFromSystemA(id, "pacs.002", null, "<pacs002/>", errorCode: null);
@@ -146,6 +147,9 @@ public sealed class SpiReceivedMsgRepositoryTests : IClassFixture<SqlServerFixtu
         var creditRow = rows.Single(r => r.MsgType == "pacs.008");
         creditRow.XmlMsgSystemA.Should().Be("<pacs008/>");   // credit body intact
         creditRow.TransferAmount.Should().Be(123.45m);
+        creditRow.CustomerBranch.Should().Be("4000");
+        creditRow.CustomerAccount.Should().Be("600000");
+        creditRow.Ispb.Should().Be("20000000");
         var responseRow = rows.Single(r => r.MsgType == "pacs.002");
         responseRow.XmlMsgSystemA.Should().Be("<pacs002/>");
         responseRow.TxStatus.Should().Be("ACSP");

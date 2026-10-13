@@ -121,12 +121,14 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
         var a = SpiSentMsg.Create(id, "pacs.008");
         a.UpdateFromSystemA("MSGA-" + id, "<a/>", null);
         a.SetCorrelationSource("MessageKey");
+        a.SetCustomerAccount("3000", null, "10000000");
         var insertA = await CreateRepo().UpsertSystemAAsync(a);
         insertA.Inserted.Should().BeTrue();
 
         var b = SpiSentMsg.Create(id, "pacs.008");
         b.UpdateFromSystemB("MSGB-" + id, "<b/>", null);
         b.SetCorrelationSource("DerivedKey"); // must NOT overwrite A's first-wins value
+        b.SetCustomerAccount("9999", "500000", "99999999"); // fills only what A left null
         var upsertB = await CreateRepo().UpsertSystemBAsync(b);
         upsertB.Inserted.Should().BeFalse();
 
@@ -135,6 +137,9 @@ public sealed class SpiSentMsgRepositoryTests : IClassFixture<SqlServerFixture>
         row.XmlMsgSystemB.Should().Be("<b/>");     // B written
         row.IsComplete.Should().BeTrue();
         row.CorrelationSource.Should().Be("MessageKey"); // first-wins
+        row.CustomerBranch.Should().Be("3000");
+        row.CustomerAccount.Should().Be("500000");
+        row.Ispb.Should().Be("10000000");
     }
 
     [Fact]

@@ -17,6 +17,12 @@ public sealed class SpiSentMsg
     public decimal? WithdrawalAmount { get; private set; }
     /// <summary>pacs.002 transaction status (TxSts, e.g. ACCC/ACSP/RJCT) from System A. Null when not a status message.</summary>
     public string? TxStatus { get; private set; }
+    /// <summary>Branch (agência) of the bank's customer account in the message. Null when the message carries none.</summary>
+    public string? CustomerBranch { get; private set; }
+    /// <summary>Account number of the bank's customer in the message. Null when the message carries none.</summary>
+    public string? CustomerAccount { get; private set; }
+    /// <summary>ISPB of the participant holding the customer's account. Null when the message carries none.</summary>
+    public string? Ispb { get; private set; }
     /// <summary>How the row key was derived (RF-05): "MessageKey" or "DerivedKey". See ISpiXmlParser.GetCorrelationSource.</summary>
     public string? CorrelationSource { get; private set; }
     public DateTime CreatedAt { get; private set; }
@@ -80,6 +86,20 @@ public sealed class SpiSentMsg
         TransferAmount ??= transfer;
         WithdrawalAmount ??= withdrawal;
     }
+
+    /// <summary>
+    /// First-wins: records the customer's branch, account and ISPB parsed from the message XML. A value
+    /// that is blank or longer than its column (4 / 20 / 8) is left null rather than truncated.
+    /// </summary>
+    public void SetCustomerAccount(string? branch, string? account, string? ispb)
+    {
+        CustomerBranch ??= FitOrNull(branch, 4);
+        CustomerAccount ??= FitOrNull(account, 20);
+        Ispb ??= FitOrNull(ispb, 8);
+    }
+
+    private static string? FitOrNull(string? value, int maxLength) =>
+        string.IsNullOrWhiteSpace(value) || value.Length > maxLength ? null : value;
 
     /// <summary>First-wins: records the pacs.002 transaction status (TxSts) parsed from the message XML.</summary>
     public void SetTxStatus(string? txStatus)

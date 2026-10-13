@@ -100,6 +100,24 @@ public sealed class CorrelateSystemBOutboundUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_SetsParsedCustomerAccount_OnRow()
+    {
+        _xmlParserMock.Setup(p => p.ExtractCustomerAccount(It.IsAny<string>(), "pacs.008", true))
+            .Returns(("3000", "500000", "10000000"));
+        SpiSentMsg? passed = null;
+        _sentRepoMock.Setup(r => r.UpsertSystemBAsync(It.IsAny<SpiSentMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiSentMsg, CancellationToken>((m, _) => passed = m)
+            .ReturnsAsync((SpiSentMsg m, CancellationToken _) => new UpsertOutcome<SpiSentMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(Envelope, AllowedTypes, CancellationToken.None);
+
+        passed.Should().NotBeNull();
+        passed!.CustomerBranch.Should().Be("3000");
+        passed.CustomerAccount.Should().Be("500000");
+        passed.Ispb.Should().Be("10000000");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Skips_WhenMsgTypeNotAllowed()
     {
         _xmlParserMock.Setup(p => p.ExtractMessageType(It.IsAny<string>())).Returns("pacs.999");
