@@ -320,7 +320,7 @@ Uses System A's inbound CDC (`spi.systema.cdc`, `source.table = "SpiRecepApiBace
    - Query `SpiReceivedMsg` by `IdempotentId`.
    - If not exists: Insert a new row setting `IdempotentId`, `MsgId` (first-wins), `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, and `CreatedAt = UtcNow`.
    - If exists: Update `XmlMsgSystemA = XmlMsg`, `SystemAErrorCode = Problem`, and `UpdatedAt = UtcNow` (do **not** overwrite `MsgId` if already set — first-wins).
-   - Look up the correlated `SpiSentMsg` pacs.008 pair, **transform** the response to System B's expected values (see Phase 9), and publish a ready-for-System-B event to `spi.systemb.responses`. If the pair is missing/incomplete, route to the DLQ.
+   - Look up the correlated `SpiSentMsg` pacs.008 pair, **transform** the response to System B's expected values (see Phase 9), and publish a ready-for-System-B event to `spi.systemb.responses`. If System B's side is still missing after the in-process retry, replicate the response unchanged (warning + metric); route to the DLQ only when no `SpiSentMsg` row exists.
 2. **System B side (written by `SpiProxyWorker`, not a separate CDC consumer):**
    - After the proxy worker signs the transformed response and enqueues it for System B, it records the delivered payload on the same `SpiReceivedMsg` row: `XmlMsgSystemB = signed XML`, `UpdatedAt = UtcNow` (creating the row defensively only if the System A side has not landed yet).
 3. **Completion:**
@@ -358,7 +358,7 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 - `SpiProxyWorker` no longer consumes System A CDC. The correlate worker is the sole consumer of the System A CDC topic; it correlates + transforms and publishes a ready-for-System-B event to **`spi.systemb.responses`**, which `SpiProxyWorker` consumes. ✅
 - `IInboundResponseTransformer` / `InboundResponseTransformer` — rewrites System-A-specific fields in the response to System B's values, computed from the stored `SpiSentMsg` A/B pacs.008 pair. Rules are config-driven (`ResponseTransformOptions`, `ResponseTransform:Rules`), seeded in code with **EndToEndId** and the **initiation form** (`LclInstrm/Prtry`, e.g. `DICT`→`MANU`); rules whose target node is absent in the response are skipped. ✅
 - `SystemBInboundReadyDto` carries the transformed XML on `spi.systemb.responses`. ✅
-- `CorrelateSystemAInboundUseCase` now correlates + transforms + publishes; if the pacs.008 pair is missing or incomplete it routes to the DLQ (rather than delivering an untransformed response). ✅
+- `CorrelateSystemAInboundUseCase` now correlates + transforms + publishes; if System B's side of the pair is missing it replicates the response unchanged with a warning; it routes to the DLQ only when no `SpiSentMsg` row exists. ✅
 - `PropagateResponseUseCase` slimmed to sign the transformed XML, enqueue it, record `SpiReceivedMsg` (System B side), and emit correlation/comparison events. The comparison event's System B XML is now the transformed+signed payload — a meaningful A-vs-B diff. ✅
 - Renamed the proxy consumer `SystemAResponseProxyConsumer` → `SystemBResponseProxyConsumer` (new topic + consumer group). ✅
 
@@ -419,4 +419,14 @@ System B pulls signed inbound responses/status reports from the proxy stream.
 - **Flows (`SpiFlowTests`):** `pibr.001`→signed `pibr.002` (signature in `AppHdr/Sgntr`); ingest edge cases (415, duplicate); System B outbound persists `SpiSentMsg`; System A+B outbound complete the shared row; divergent business fields raise a discrepancy (persisted **and** published, RF-08); inbound Bacen error propagated to System B as a signed `RJCT` (RF-04); uncorrelated inbound routed to the DLQ (RF-07); delete-unknown-stream → 410. ✅
 - **Reliability:** helpers drain-until-found on stream pulls, consume Kafka with fresh groups from earliest, poll the DB for RF-08 persistence, and sequence the two correlation sides to avoid the create-if-missing race. Full suite: **14/14 green** (Docker required). ✅
 
+## Phase 14 — Inbound Responses Without System B's Side & DLQ Retry Worker ✅ Complete
+
+**Goal:** Stop dead-lettering Bacen responses whose `SpiSentMsg` row has System A's side but not System B's, and retry what does reach a DLQ.
+
+### Deliverables
+
+- **Correlation:** `CorrelateSystemAInboundUseCase` still waits for System B's side (`Correlation:Retry`), but when the row exists without it the response is replicated to System B unchanged (warning + `spi.inbound.replicated_uncorrelated`), like pacs.004/admi.002. Only a response with no `SpiSentMsg` row is dead-lettered. ✅
+- **DLQ retry:** new `SpiDlqRetryWorker` hosts `DlqRetryConsumer` (`Infrastructure/Messaging/Dlq`). It consumes the DLQ topics, waits a backoff counted from `dlq.timestamp` and republishes the message to `dlq.source.topic` with `dlq.retry.count` incremented, so the original consumer processes it again. After `DlqRetry:MaxRetries` (or for `NonRetryableExceptionTypes`) the message is logged and counted (`spi.dlq.retries{outcome="exhausted"}`, alert `SpiDlqRetriesExhausted`) and not retried. A failed republish is never committed past. ✅
+- **Headers:** `KafkaConsumerBase` keeps `dlq.retry.count` and replaces the other `dlq.*` headers when a retried message fails again. ✅
+- **Tests:** `DlqRetryPolicyTests`, `DlqRetryConsumerTests`, new cases in `KafkaConsumerBaseTests` and `CorrelateSystemAInboundUseCaseTests`; integration flows for "System A only → delivered, not dead-lettered" and "dead-lettered → retried → delivered". ✅
 

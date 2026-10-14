@@ -210,6 +210,43 @@ public sealed class SpiFlowTests
         dead.Should().NotBeNull("the uncorrelated event must land in spi.systema.cdc.dlq");
     }
 
+    [Fact]
+    public async Task InboundWithSystemAOnly_IsDeliveredToSystemB_NotDeadLettered()
+    {
+        // System A sent its pacs.008 but System B never did: the SpiSentMsg row has only A's side.
+        // Bacen's pacs.002 must still reach System B (unchanged) instead of being dead-lettered.
+        var e2e = NewId();
+        await PublishCdcAsync(CdcSource.OutboundTable, e2e, BuildPacs008Xml("MSG-A-" + e2e, e2e), messageId: "MSG-A-" + e2e);
+        await PublishCdcAsync(CdcSource.InboundTable, e2e, BuildPacs002Xml("BACEN-" + e2e, e2e));
+
+        var body = await PullUntilAsync("11111111", b => b.Contains(e2e));
+
+        body.Should().NotBeNull("a response whose System A side is known must be delivered to System B");
+        body!.Should().Contain($"<OrgnlEndToEndId>{e2e}</OrgnlEndToEndId>");
+
+        var dead = await ConsumeUntilAsync(Topics.SystemACdcDlq, v => v.Contains(e2e), timeoutSeconds: 5);
+        dead.Should().BeNull("the response must not be dead-lettered");
+    }
+
+    [Fact]
+    public async Task DeadLetteredInbound_IsRetried_AndDeliveredOnceCorrelatable()
+    {
+        var systemAE2e = NewId();
+        var systemBE2e = NewId();
+
+        // No SpiSentMsg row yet: the inbound response is dead-lettered.
+        await PublishCdcAsync(CdcSource.InboundTable, systemAE2e, BuildPacs002Xml("BACEN-" + systemAE2e, systemAE2e));
+        var dead = await ConsumeUntilAsync(Topics.SystemACdcDlq, v => v.Contains(systemAE2e));
+        dead.Should().NotBeNull("the uncorrelated event must be dead-lettered first");
+
+        // The pair shows up afterwards; the DLQ retry worker puts the event back on the CDC topic.
+        await SeedCompletePacs008PairAsync(systemAE2e, systemBE2e);
+
+        var body = await PullUntilAsync("11111111", b => b.Contains(systemBE2e), timeoutSeconds: 60);
+
+        body.Should().NotBeNull("the retried event must be correlated and delivered to System B");
+    }
+
     // ---------------------------------------------------------------- stream acking (§2.2.2.3)
 
     [Fact]

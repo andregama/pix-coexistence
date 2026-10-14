@@ -450,18 +450,35 @@ public sealed class CorrelateSystemAInboundUseCaseTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Throws_WhenSentMsgIncomplete()
+    public async Task ExecuteAsync_Pacs002_SystemAOnly_ReplicatesUnchanged_WithoutThrowing()
     {
-        var incomplete = SpiSentMsg.Create("E2E-A", "pacs.008");
-        incomplete.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null); // B side missing
+        var systemAOnly = SpiSentMsg.Create("E2E-A", "pacs.008");
+        systemAOnly.UpdateFromSystemA("MSG-A", "<pacs008-a/>", null); // B side never arrives
 
         _receivedRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
             .ReturnsAsync((SpiReceivedMsg?)null);
         _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(incomplete);
+            .ReturnsAsync(systemAOnly);
+
+        KafkaEnvelope? published = null;
+        _publisherMock
+            .Setup(p => p.PublishAsync("spi.systemb.responses", It.IsAny<KafkaEnvelope>(), It.IsAny<CancellationToken>()))
+            .Callback<string, KafkaEnvelope, CancellationToken>((_, e, _) => published = e)
+            .Returns(Task.CompletedTask);
 
         await FluentActions.Invoking(() => _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().NotThrowAsync("System A's side is known, so the response must not be dead-lettered");
+
+        // System B's side is waited for up to MaxAttempts (3) before replicating without it.
+        _sentRepoMock.Verify(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+        _transformerMock.Verify(t => t.Transform(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>()),
+            Times.Never);
+        _metricsMock.Verify(m => m.RecordUncorrelatedReplication("pacs.002"), Times.Once);
+        published.Should().NotBeNull();
+        JsonSerializer.Deserialize<SystemBInboundReadyDto>(
+            Encoding.UTF8.GetString(Convert.FromBase64String(published!.PayloadBase64)))!
+            .TransformedXml.Should().Be("<pacs002/>");
     }
 
     [Fact]
@@ -515,5 +532,28 @@ public sealed class CorrelateSystemAInboundUseCaseTests
         await _sut.ExecuteAsync(cdc, Types(allowed: allowed, primary: allowed), CancellationToken.None);
 
         passed!.CustomerDocument.Should().Be("80000000000");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SetsParsedCustomerAccount_AsReceived()
+    {
+        _xmlParserMock.Setup(p => p.ExtractCustomerAccount(It.IsAny<string>(), It.IsAny<string>(), false))
+            .Returns(("4000", "600000", "20000000"));
+        _sentRepoMock.Setup(r => r.FindByIdempotentIdAsync("E2E-A", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CompleteSentMsg());
+        _transformerMock.Setup(t => t.Transform(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns("<x/>");
+
+        SpiReceivedMsg? upserted = null;
+        _receivedRepoMock.Setup(r => r.UpsertSystemAAsync(It.IsAny<SpiReceivedMsg>(), It.IsAny<CancellationToken>()))
+            .Callback<SpiReceivedMsg, CancellationToken>((m, _) => upserted = m)
+            .ReturnsAsync((SpiReceivedMsg m, CancellationToken _) => new UpsertOutcome<SpiReceivedMsg>(m, Inserted: true));
+
+        await _sut.ExecuteAsync(CdcJson, Types(), CancellationToken.None);
+
+        upserted.Should().NotBeNull();
+        upserted!.CustomerBranch.Should().Be("4000");
+        upserted.CustomerAccount.Should().Be("600000");
+        upserted.Ispb.Should().Be("20000000");
     }
 }

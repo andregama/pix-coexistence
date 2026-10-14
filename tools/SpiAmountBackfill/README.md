@@ -1,8 +1,8 @@
 # SpiAmountBackfill
 
-One-off tool that repairs the amount / transaction-status columns on the coexistence message tables.
+One-off tool that repairs the amount / transaction-status / customer-account columns on the coexistence message tables.
 
-Three passes, all idempotent and re-runnable:
+Four passes, all idempotent and re-runnable:
 
 1. **Sent amounts** — reparses each `SpiSentMsg` row's own XML into `TransferAmount` / `WithdrawalAmount`
    (outbound rows are never overwritten, so their stored XML is authoritative).
@@ -13,13 +13,17 @@ Three passes, all idempotent and re-runnable:
      `TxSts=RJCT`, a `REJECTED_TRANSFER` marker on `SystemAErrorCode`.
 3. **Sent TxStatus** — reads outbound pacs.002 acks from **`DB_SYSTEMA.dbo.SpiEnvioApiBacen`** and fills
    `SpiSentMsg.TxStatus` (first-wins), stamping the rejected marker on `SystemAErrorCode` for RJCT.
+4. **Customer account** — reparses each `SpiSentMsg` and `SpiReceivedMsg` row's own XML into
+   `CustomerBranch` / `CustomerAccount` / `Ispb` (first-wins; only rows where all three are still null).
+   Runs after pass 2 so a received pacs.008 is read from its restored body. Messages that carry no
+   party data (e.g. pacs.002) stay null.
 
 Passes 2–3 need System A's database and are **skipped with a warning** when `ConnectionStrings:SystemA`
 is unset.
 
 ## Run
 
-Apply the schema first (composite key + amount/status columns):
+Apply the schema first (composite key + amount/status/customer-account columns):
 
 ```bash
 make migrate
@@ -35,7 +39,7 @@ Configuration (`appsettings.json`, environment variables, or command line):
 
 - `ConnectionStrings:SqlServer` — the coexistence database (`DB_COEXISTENCE`), written to.
 - `ConnectionStrings:SystemA` — System A's database (`DB_SYSTEMA`), read-only source for passes 2–3.
-- `Backfill:BatchSize` — rows per batch for the sent-amount pass (default 500).
+- `Backfill:BatchSize` — rows per batch for the passes that reparse stored XML (1 and 4; default 500).
 
 Example overriding connection strings:
 

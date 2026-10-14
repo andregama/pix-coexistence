@@ -83,4 +83,20 @@ public sealed class SpiSentMsgTests
         msg.UpdateFromSystemA("MSG-A", "<xml/>", "RJCT");
         msg.SystemAErrorCode.Should().Be("RJCT");
     }
+
+    [Fact]
+    public void SetCustomerAccount_IsFirstWins_AndDropsValuesThatDoNotFitTheColumn()
+    {
+        var msg = SpiSentMsg.Create("E12345678", "pacs.008");
+
+        msg.SetCustomerAccount("12345", "500000", " ");
+        msg.CustomerBranch.Should().BeNull("a 5-character branch does not fit VARCHAR(4)");
+        msg.CustomerAccount.Should().Be("500000");
+        msg.Ispb.Should().BeNull();
+
+        msg.SetCustomerAccount("3000", "999999", "10000000");
+        msg.CustomerBranch.Should().Be("3000");
+        msg.CustomerAccount.Should().Be("500000", "the first value wins");
+        msg.Ispb.Should().Be("10000000");
+    }
 }

@@ -64,6 +64,7 @@ src/
 ├── DictProxyApi/              # ASP.NET Core — DICT re-signing forward proxy (calls the real DICT API)
 ├── SpiCorrelateWorker/        # Worker — idempotency-key correlation, response transformation, pibr Echo generation
 ├── SpiProxyWorker/            # Worker — signs transformed responses and enqueues them for System B to pull
+├── SpiDlqRetryWorker/         # Worker — republishes DLQ messages to their source topic after a backoff
 └── SpiComparisonEngine/       # Worker — field-level comparison and discrepancy logging
 
 tests/
@@ -162,6 +163,9 @@ dotnet run --project src/SpiProxyWorker/ConvivenciaPix.SpiProxyWorker.csproj
 
 # Terminal 4
 dotnet run --project src/SpiComparisonEngine/ConvivenciaPix.SpiComparisonEngine.csproj
+
+# Terminal 5 (optional) — retries dead-lettered messages
+dotnet run --project src/SpiDlqRetryWorker/ConvivenciaPix.SpiDlqRetryWorker.csproj
 ```
 
 The API will be available at `http://localhost:5152` (HTTPS: `https://localhost:7101`). Swagger UI is at `http://localhost:5152/swagger`.

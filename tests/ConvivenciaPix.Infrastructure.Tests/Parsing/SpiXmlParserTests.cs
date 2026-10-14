@@ -208,6 +208,77 @@ public sealed class SpiXmlParserTests
         withdrawal.Should().Be(0m);
     }
 
+    // pacs.008 transaction as in the SPI catalog: debtor 3000/500000 at ISPB 10000000, creditor
+    // 4000/600000 at ISPB 20000000.
+    private const string Pacs008Parties = """
+        <CdtTrfTxInf>
+          <PmtId><EndToEndId>E9999901012341234123412345678900</EndToEndId></PmtId>
+          <DbtrAcct><Id><Othr><Id>500000</Id><Issr>3000</Issr></Othr></Id><Tp><Cd>CACC</Cd></Tp></DbtrAcct>
+          <DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>10000000</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt>
+          <CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>20000000</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt>
+          <CdtrAcct><Id><Othr><Id>600000</Id><Issr>4000</Issr></Othr></Id><Tp><Cd>SVGS</Cd></Tp></CdtrAcct>
+        </CdtTrfTxInf>
+        """;
+
+    [Fact]
+    public void ExtractCustomerAccount_SentPacs008_IsTheDebtor()
+    {
+        var xml = BuildSpiEnvelope("pacs.008", "1.16", "FIToFICstmrCdtTrf", Pacs008Parties);
+        _parser.ExtractCustomerAccount(xml, "pacs.008", sent: true)
+            .Should().Be(("3000", "500000", "10000000"));
+    }
+
+    [Fact]
+    public void ExtractCustomerAccount_ReceivedPacs008_IsTheCreditor()
+    {
+        var xml = BuildSpiEnvelope("pacs.008", "1.16", "FIToFICstmrCdtTrf", Pacs008Parties);
+        _parser.ExtractCustomerAccount(xml, "pacs.008", sent: false)
+            .Should().Be(("4000", "600000", "20000000"));
+    }
+
+    [Fact]
+    public void ExtractCustomerAccount_HeaderIspbMatchingAnAgent_DecidesTheSide()
+    {
+        // Received (AppHdr/To = 99999010) by the debtor's PSP, as a pain.009 is: the customer is the
+        // debtor although the message is inbound.
+        var xml = BuildSpiEnvelope("pain.009", "1.1", "MndtInitnReq", """
+            <Mndt>
+              <CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>22222222</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt>
+              <DbtrAcct><Id><Othr><Id>1111108</Id><Issr>0001</Issr></Othr></Id></DbtrAcct>
+              <DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>99999010</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt>
+            </Mndt>
+            """);
+        _parser.ExtractCustomerAccount(xml, "pain.009", sent: false)
+            .Should().Be(("0001", "1111108", "99999010"));
+    }
+
+    [Theory]
+    [InlineData(true, "99999010")]  // returning the money: the bank was the original creditor agent
+    [InlineData(false, "99999009")] // receiving the return: the bank was the original debtor agent
+    public void ExtractCustomerAccount_Pacs004_IspbOnly_FromReturnedPaymentAgents(bool sent, string expectedIspb)
+    {
+        var xml = BuildSpiEnvelope("pacs.004", "1.5", "PmtRtr", """
+            <TxInf>
+              <RtrId>D9999900920200120123412345678900</RtrId>
+              <OrgnlTxRef>
+                <DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>99999009</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt>
+                <CdtrAgt><FinInstnId><ClrSysMmbId><MmbId>99999010</MmbId></ClrSysMmbId></FinInstnId></CdtrAgt>
+              </OrgnlTxRef>
+            </TxInf>
+            """).Replace("<Id>99999010</Id>", "<Id>00000000</Id>"); // header matches neither agent
+        _parser.ExtractCustomerAccount(xml, "pacs.004", sent)
+            .Should().Be(((string?)null, (string?)null, expectedIspb));
+    }
+
+    [Fact]
+    public void ExtractCustomerAccount_MessageWithoutParties_ReturnsNulls()
+    {
+        var xml = BuildSpiEnvelope("pacs.002", "1.17", "FIToFIPmtStsRpt",
+            "<TxInfAndSts><OrgnlEndToEndId>E2E-1</OrgnlEndToEndId><TxSts>ACSP</TxSts></TxInfAndSts>");
+        _parser.ExtractCustomerAccount(xml, "pacs.002", sent: false)
+            .Should().Be(((string?)null, (string?)null, (string?)null));
+    }
+
     [Fact]
     public void ExtractAmount_MissingElement_ReturnsZero()
     {

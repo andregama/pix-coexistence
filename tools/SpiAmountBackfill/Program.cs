@@ -9,13 +9,16 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-// One-off backfill for the amount/status columns.
+// One-off backfill for the amount/status/customer-account columns.
 //   * Sent amounts: reparsed from each SpiSentMsg row's own XML (never overwritten by a response).
 //   * Received rows + sent TxStatus: rebuilt from System A's source tables (DB_SYSTEMA), because an
 //     inbound pacs.002 overwrote the pacs.008 body in SpiReceivedMsg — the original credit survives
 //     only in DB_SYSTEMA.dbo.SpiRecepApiBacen. Reconstructs the split (E2E,'pacs.008') and
 //     (E2E,'pacs.002') rows and fills SpiSentMsg.TxStatus from DB_SYSTEMA.dbo.SpiEnvioApiBacen.
 //     Scoped to the EndToEndIds already in SpiReceivedMsg, so it reads only the relevant System A rows.
+//   * Customer account (CustomerBranch / CustomerAccount / Ispb): reparsed from each SpiSentMsg and
+//     SpiReceivedMsg row's own XML. Runs last, so received rows are read after their pacs.008 body
+//     has been restored from System A.
 // Idempotent and re-runnable. Run: dotnet run --project tools/SpiAmountBackfill
 
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
@@ -67,9 +70,13 @@ else
     }
 }
 
+var sentCustomer = await BackfillSentCustomerAccountAsync(db, parser, batchSize, logger, ct);
+var recvCustomer = await BackfillReceivedCustomerAccountAsync(db, parser, batchSize, logger, ct);
+
 logger.LogInformation(
-    "Backfill complete. Sent amounts={Sent}; received pacs.008 restored={RecvRestored}, pacs.002 rows upserted={RecvCreated}; sent TxStatus set={SentStatus}.",
-    sent, recvRestored, recvCreated, sentStatus);
+    "Backfill complete. Sent amounts={Sent}; received pacs.008 restored={RecvRestored}, pacs.002 rows upserted={RecvCreated}; sent TxStatus set={SentStatus}; "
+    + "customer account set on sent={SentCustomer}, received={RecvCustomer}.",
+    sent, recvRestored, recvCreated, sentStatus, sentCustomer, recvCustomer);
 return 0;
 
 // --- Sent amounts: reparse each SpiSentMsg row's own XML (local, EF) ---------------------------------
@@ -223,6 +230,94 @@ static async Task<int> BackfillSentTxStatusFromSystemAAsync(
             + "WHERE IdempotentId=@e2e AND MsgType=@type AND TxStatus IS NULL",
             ("@status", status), ("@marker", (object?)marker ?? DBNull.Value), ("@e2e", e2e), ("@type", Pacs002));
         updated += affected;
+    }
+    return updated;
+}
+
+// --- Customer account: reparse each row's own XML (local, EF) ----------------------------------------
+// Rows whose message carries no party data (e.g. pacs.002) stay null and are simply re-read on a re-run.
+static async Task<int> BackfillSentCustomerAccountAsync(
+    CoexistenceDbContext db, ISpiXmlParser parser, int batchSize, ILogger logger, CancellationToken ct)
+{
+    var updated = 0;
+    string? cursor = null;
+    while (true)
+    {
+        var batch = await db.SpiSentMsgs
+            .Where(x => x.CustomerBranch == null && x.CustomerAccount == null && x.Ispb == null
+                && (x.XmlMsgSystemA != null || x.XmlMsgSystemB != null)
+                && (cursor == null || string.Compare(x.IdempotentId, cursor) > 0))
+            .OrderBy(x => x.IdempotentId)
+            .Take(batchSize)
+            .ToListAsync(ct);
+        if (batch.Count == 0)
+            break;
+
+        foreach (var row in batch)
+        {
+            var xml = row.XmlMsgSystemA ?? row.XmlMsgSystemB;
+            try
+            {
+                var (branch, account, ispb) = parser.ExtractCustomerAccount(xml!, row.MsgType, sent: true);
+                row.SetCustomerAccount(branch, account, ispb);
+                if (row.CustomerBranch is not null || row.CustomerAccount is not null || row.Ispb is not null)
+                    updated++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Skipping SpiSentMsg IdempotentId={Id} MsgType={Type}: could not parse customer account.",
+                    row.IdempotentId, row.MsgType);
+            }
+        }
+
+        cursor = batch[^1].IdempotentId;
+        await db.SaveChangesAsync(ct);
+        db.ChangeTracker.Clear();
+    }
+    return updated;
+}
+
+static async Task<int> BackfillReceivedCustomerAccountAsync(
+    CoexistenceDbContext db, ISpiXmlParser parser, int batchSize, ILogger logger, CancellationToken ct)
+{
+    var updated = 0;
+    string? cursorId = null;
+    string? cursorType = null;
+    while (true)
+    {
+        // Keyset over the composite key (IdempotentId, MsgType).
+        var batch = await db.SpiReceivedMsgs
+            .Where(x => x.CustomerBranch == null && x.CustomerAccount == null && x.Ispb == null
+                && (x.XmlMsgSystemA != null || x.XmlMsgSystemB != null)
+                && (cursorId == null
+                    || string.Compare(x.IdempotentId, cursorId) > 0
+                    || (x.IdempotentId == cursorId && string.Compare(x.MsgType, cursorType) > 0)))
+            .OrderBy(x => x.IdempotentId).ThenBy(x => x.MsgType)
+            .Take(batchSize)
+            .ToListAsync(ct);
+        if (batch.Count == 0)
+            break;
+
+        foreach (var row in batch)
+        {
+            var xml = row.XmlMsgSystemA ?? row.XmlMsgSystemB;
+            try
+            {
+                var (branch, account, ispb) = parser.ExtractCustomerAccount(xml!, row.MsgType, sent: false);
+                row.SetCustomerAccount(branch, account, ispb);
+                if (row.CustomerBranch is not null || row.CustomerAccount is not null || row.Ispb is not null)
+                    updated++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Skipping SpiReceivedMsg IdempotentId={Id} MsgType={Type}: could not parse customer account.",
+                    row.IdempotentId, row.MsgType);
+            }
+        }
+
+        (cursorId, cursorType) = (batch[^1].IdempotentId, batch[^1].MsgType);
+        await db.SaveChangesAsync(ct);
+        db.ChangeTracker.Clear();
     }
     return updated;
 }

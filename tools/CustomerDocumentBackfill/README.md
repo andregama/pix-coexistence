@@ -22,7 +22,7 @@ to run while the workers are up.
 
 ## Run
 
-Apply the schema first (`infra/sql/010_AddCustomerDocument.sql`, a no-op where the column exists):
+Apply the schema first (`infra/sql/011_AddCustomerDocument.sql`, a no-op where the column exists):
 
 ```bash
 make migrate

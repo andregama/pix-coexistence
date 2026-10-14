@@ -1,5 +1,6 @@
 using Confluent.Kafka;
 using ConvivenciaPix.Application.Interfaces;
+using ConvivenciaPix.Infrastructure.Messaging.Dlq;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -144,16 +145,20 @@ public abstract class KafkaConsumerBase<TKey, TValue> : BackgroundService
     {
         var headers = new Headers();
 
-        // Copy original headers
+        // Copy original headers. A message put back by the DLQ retry worker fails here a second time:
+        // keep its retry counter, drop the dlq.* headers of the previous failure (rewritten below).
         foreach (var header in original.Message.Headers ?? Enumerable.Empty<IHeader>())
-            headers.Add(new Header(header.Key, header.GetValueBytes()));
+        {
+            if (header.Key == DlqHeaders.RetryCount || !header.Key.StartsWith(DlqHeaders.Prefix, StringComparison.Ordinal))
+                headers.Add(new Header(header.Key, header.GetValueBytes()));
+        }
 
-        headers.Add("dlq.source.topic", System.Text.Encoding.UTF8.GetBytes(original.Topic));
-        headers.Add("dlq.source.partition", BitConverter.GetBytes(original.Partition.Value));
-        headers.Add("dlq.source.offset", BitConverter.GetBytes(original.Offset.Value));
-        headers.Add("dlq.exception.type", System.Text.Encoding.UTF8.GetBytes(exception.GetType().FullName ?? "Unknown"));
-        headers.Add("dlq.exception.message", System.Text.Encoding.UTF8.GetBytes(exception.Message));
-        headers.Add("dlq.timestamp", System.Text.Encoding.UTF8.GetBytes(DateTimeOffset.UtcNow.ToString("O")));
+        headers.Add(DlqHeaders.SourceTopic, System.Text.Encoding.UTF8.GetBytes(original.Topic));
+        headers.Add(DlqHeaders.SourcePartition, BitConverter.GetBytes(original.Partition.Value));
+        headers.Add(DlqHeaders.SourceOffset, BitConverter.GetBytes(original.Offset.Value));
+        headers.Add(DlqHeaders.ExceptionType, System.Text.Encoding.UTF8.GetBytes(exception.GetType().FullName ?? "Unknown"));
+        headers.Add(DlqHeaders.ExceptionMessage, System.Text.Encoding.UTF8.GetBytes(exception.Message));
+        headers.Add(DlqHeaders.Timestamp, System.Text.Encoding.UTF8.GetBytes(DateTimeOffset.UtcNow.ToString("O")));
 
         return headers;
     }

@@ -3,7 +3,7 @@ GO
 SET ANSI_NULLS ON;
 GO
 
--- Phase 12: bank customer's CPF/CNPJ
+-- Phase 13: bank customer's CPF/CNPJ
 -- Adds CustomerDocument (CPF 11 / CNPJ 14 chars, punctuation removed) to both message tables.
 -- Filled on insert/update by the correlate worker; existing rows are backfilled by
 -- tools/CustomerDocumentBackfill.

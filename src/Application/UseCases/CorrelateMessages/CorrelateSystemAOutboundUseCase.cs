@@ -67,6 +67,8 @@ public sealed class CorrelateSystemAOutboundUseCase : ICorrelateSystemAOutboundU
         msg.SetAmounts(transferAmount, withdrawalAmount);
         msg.SetTxStatus(txStatus);
         msg.SetCustomerDocument(_xmlParser.ExtractCustomerDocument(mapped.XmlMsg, msgType, sentByBank: true));
+        var (branch, account, ispb) = _xmlParser.ExtractCustomerAccount(mapped.XmlMsg, msgType, sent: true);
+        msg.SetCustomerAccount(branch, account, ispb);
         if (originalId is not null)
             msg.SetOriginalMsgIdempotentId(originalId);
 

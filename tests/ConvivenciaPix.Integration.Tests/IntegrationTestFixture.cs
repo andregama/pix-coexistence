@@ -1,6 +1,8 @@
 using Confluent.Kafka;
 using ConvivenciaPix.Application;
 using ConvivenciaPix.Infrastructure;
+using ConvivenciaPix.Infrastructure.Messaging;
+using ConvivenciaPix.Infrastructure.Messaging.Dlq;
 using ConvivenciaPix.Infrastructure.Persistence;
 using ConvivenciaPix.SpiComparisonEngine.Consumers;
 using ConvivenciaPix.SpiCorrelateWorker.Consumers;
@@ -103,6 +105,35 @@ public sealed class IntegrationTestFixture : WebApplicationFactory<Program>, IAs
             services.AddHostedService<SystemBOutboundCorrelateConsumer>();
             services.AddHostedService<SystemBResponseProxyConsumer>();
             services.AddHostedService<SpiComparisonConsumer>();
+
+            // DLQ retry worker, limited to the System A CDC DLQ and with short waits so a dead-lettered
+            // event is put back within the tests' timeouts.
+            services.Configure<DlqRetryOptions>(o =>
+            {
+                o.Topics = Topics.SystemACdcDlq;
+                o.MaxRetries = 3;
+                o.InitialDelaySeconds = 2;
+                o.BackoffMultiplier = 1.0;
+                o.RepublishFailureDelaySeconds = 1;
+            });
+            services.AddSingleton<IConsumer<byte[], byte[]>>(sp =>
+                new ConsumerBuilder<byte[], byte[]>(new ConsumerConfig
+                {
+                    BootstrapServers = sp.GetRequiredService<IConfiguration>()["Kafka:BootstrapServers"]!,
+                    GroupId = "spi-dlq-retry",
+                    AutoOffsetReset = AutoOffsetReset.Earliest,
+                    EnableAutoCommit = false,
+                    // The DLQ topic does not exist until the first dead-letter; create it on subscribe.
+                    AllowAutoCreateTopics = true,
+                }).Build());
+            services.AddSingleton<IProducer<byte[], byte[]>>(sp =>
+                new ProducerBuilder<byte[], byte[]>(new ProducerConfig
+                {
+                    BootstrapServers = sp.GetRequiredService<IConfiguration>()["Kafka:BootstrapServers"]!,
+                    Acks = Acks.Leader,
+                    MessageTimeoutMs = 5_000,
+                }).Build());
+            services.AddHostedService<DlqRetryConsumer>();
         });
     }
 }

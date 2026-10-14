@@ -4,7 +4,8 @@ namespace ConvivenciaPix.Application.UseCases.CorrelateMessages;
 /// Bounds the in-process retry that <see cref="CorrelateSystemAInboundUseCase"/> applies while the
 /// correlated <c>SpiSentMsg</c> row is still missing or incomplete — the race where a Bacen inbound
 /// response is processed before System B's outbound side has been persisted. Once attempts are
-/// exhausted the use case throws and the event is dead-lettered.
+/// exhausted, a row that has no System B side is replicated to System B unchanged; only when the
+/// row does not exist at all does the use case throw and the event get dead-lettered.
 /// </summary>
 public sealed class CorrelateInboundRetryOptions
 {
