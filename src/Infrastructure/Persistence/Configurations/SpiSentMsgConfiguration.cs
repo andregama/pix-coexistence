@@ -33,6 +33,7 @@ public sealed class SpiSentMsgConfiguration : IEntityTypeConfiguration<SpiSentMs
         builder.Property(x => x.CustomerAccount).HasColumnType("VARCHAR(20)");
         builder.Property(x => x.Ispb).HasColumnType("VARCHAR(8)");
         builder.Property(x => x.CorrelationSource).HasColumnType("VARCHAR(20)");
+        builder.Property(x => x.CustomerDocument).HasColumnType("VARCHAR(14)");
         builder.Property(x => x.CreatedAt).HasColumnType("DATETIME2").IsRequired();
         builder.Property(x => x.UpdatedAt).HasColumnType("DATETIME2");
 

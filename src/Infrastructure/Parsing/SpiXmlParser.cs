@@ -112,6 +112,68 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
             "//*[local-name()='TxSts']");
     }
 
+    // Column width of SpiSentMsg/SpiReceivedMsg.CustomerDocument: CPF has 11 chars, CNPJ 14.
+    private const int MaxCustomerDocumentLength = 14;
+
+    public string? ExtractCustomerDocument(string xml, string msgType, bool sentByBank)
+    {
+        var (doc, ns) = Load(xml);
+
+        // A pacs.008 is always sent by the payer's PSP to the payee's PSP, so the direction alone
+        // says which party is ours. Only the first transaction is read: it is the one that keys the row.
+        if (msgType == "pacs.008")
+        {
+            var party = sentByBank ? "Dbtr" : "Cdtr";
+            return FirstPartyDocument(doc, ns, $"(//*[local-name()='CdtTrfTxInf'])[1]/*[local-name()='{party}']");
+        }
+
+        // Other types: the party whose agent is the bank, identified by its ISPB in the AppHdr.
+        var bankIspb = SelectText(doc, ns,
+            $"//*[local-name()='AppHdr']/*[local-name()='{(sentByBank ? "Fr" : "To")}']" +
+            "/*[local-name()='FIId']/*[local-name()='FinInstnId']/*[local-name()='Othr']/*[local-name()='Id']");
+        if (bankIspb is null || bankIspb.Contains('\''))
+            return null;
+
+        // Ordered so that, if both agents are the bank, the direction default wins.
+        string[] parties = sentByBank ? ["Dbtr", "Cdtr"] : ["Cdtr", "Dbtr"];
+        foreach (var party in parties)
+        {
+            var owner = $"//*[*[local-name()='{party}Agt']/*[local-name()='FinInstnId']" +
+                        $"/*[local-name()='ClrSysMmbId']/*[local-name()='MmbId']='{bankIspb}']" +
+                        $"/*[local-name()='{party}']";
+            var document = FirstPartyDocument(doc, ns, owner);
+            if (document is not null)
+                return document;
+        }
+        return null;
+    }
+
+    // First valid CPF/CNPJ, in document order, among the parties matched by the XPath:
+    // <party>/Id/PrvtId|OrgId/Othr/Id.
+    private static string? FirstPartyDocument(XmlDocument doc, XmlNamespaceManager ns, string party)
+    {
+        var nodes = doc.SelectNodes(
+            $"{party}/*[local-name()='Id']/*[local-name()='PrvtId' or local-name()='OrgId']" +
+            "/*[local-name()='Othr']/*[local-name()='Id']", ns);
+        if (nodes is null) return null;
+        foreach (XmlNode node in nodes)
+        {
+            var document = NormalizeDocument(node.InnerText.Trim());
+            if (document is not null)
+                return document;
+        }
+        return null;
+    }
+
+    // Punctuation removed, upper-cased (the alphanumeric CNPJ keeps its letters). Anything longer
+    // than a CNPJ is not a CPF/CNPJ and is dropped rather than truncated.
+    private static string? NormalizeDocument(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        var normalized = new string(raw.Where(char.IsAsciiLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+        return normalized.Length is > 0 and <= MaxCustomerDocumentLength ? normalized : null;
+    }
+
     public (string? Branch, string? Account, string? Ispb) ExtractCustomerAccount(string xml, string msgType, bool sent)
     {
         var (doc, ns) = Load(xml);
