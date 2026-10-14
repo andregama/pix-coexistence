@@ -631,7 +631,7 @@ public sealed class SpiXmlParserTests
 
     [Theory]
     [InlineData(false, "80000000000")] // received from the creditor's PSP: our customer is the payer
-    [InlineData(true, null)]           // sent by the bank but neither agent is ours
+    [InlineData(true, "80000000000")]  // sent, header matches neither agent: direction fallback (debtor)
     public void ExtractCustomerDocument_Pain009_ReturnsPartyWhoseAgentIsTheBank(bool sentByBank, string? expected)
     {
         var mandate = "<Mndt>" + Party("Cdtr", "90000000000", "OrgId") + Agent("Cdtr", OtherIspb) +
@@ -651,6 +651,24 @@ public sealed class SpiXmlParserTests
             Party("Dbtr", "80000000000") + Agent("Dbtr", BankIspb) +
             "</OrgnlMndt></OrgnlMndt></UndrlygAccptncDtls>");
         _parser.ExtractCustomerDocument(xml, "pain.012", sentByBank: true).Should().Be("80000000000");
+    }
+
+    [Theory]
+    [InlineData("pacs.008", "FIToFICstmrCdtTrf", "CdtTrfTxInf")]
+    [InlineData("pain.009", "MndtInitnReq", "Mndt")]
+    public void ExtractCustomerDocument_PicksTheSameSideAsExtractCustomerAccount(string family, string element, string wrapper)
+    {
+        // Received, but the header names the debtor's agent: both extractors must pick the debtor.
+        var body = $"<{wrapper}>" +
+                   Party("Dbtr", "80000000000") +
+                   "<DbtrAcct><Id><Othr><Id>500000</Id><Issr>3000</Issr></Othr></Id></DbtrAcct>" +
+                   Agent("Dbtr", BankIspb) + Agent("Cdtr", OtherIspb) + Party("Cdtr", "90000000000", "OrgId") +
+                   "<CdtrAcct><Id><Othr><Id>600000</Id><Issr>4000</Issr></Othr></Id></CdtrAcct>" +
+                   $"</{wrapper}>";
+        var xml = BuildAddressed(family, element, OtherIspb, BankIspb, body);
+
+        _parser.ExtractCustomerDocument(xml, family, sentByBank: false).Should().Be("80000000000");
+        _parser.ExtractCustomerAccount(xml, family, sent: false).Should().Be(("3000", "500000", BankIspb));
     }
 
     [Fact]

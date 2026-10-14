@@ -6,11 +6,11 @@ New rows get the column from the correlate worker; this covers what was written 
 
 It uses the same rule as the worker (`ISpiXmlParser.ExtractCustomerDocument`):
 
-- **pacs.008**: the debtor (`Dbtr`) on `SpiSentMsg`, the creditor (`Cdtr`) on `SpiReceivedMsg`
-  (first `CdtTrfTxInf`).
-- **other types** (pain.009/011/012/013/014, …): the party whose agent (`DbtrAgt`/`CdtrAgt`
-  `ClrSysMmbId/MmbId`) is the bank, i.e. the ISPB in `AppHdr/Fr` for sent messages and `AppHdr/To`
-  for received ones.
+- The customer is the party (`Dbtr` or `Cdtr`) whose agent (`DbtrAgt`/`CdtrAgt` `ClrSysMmbId/MmbId`)
+  is the bank, i.e. the ISPB in `AppHdr/Fr` for sent messages and `AppHdr/To` for received ones —
+  the same side `ExtractCustomerAccount` picks for `CustomerBranch`/`CustomerAccount`/`Ispb`.
+- When the header matches neither agent, the direction decides: the debtor on `SpiSentMsg`, the
+  creditor on `SpiReceivedMsg`. For pacs.008 only the first `CdtTrfTxInf` is read.
 - The document is `<party>/Id/PrvtId|OrgId/Othr/Id`, punctuation removed and upper-cased. Values
   longer than 14 characters are not a CPF/CNPJ and are left out.
 

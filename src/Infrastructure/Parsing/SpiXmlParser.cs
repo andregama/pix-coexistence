@@ -119,33 +119,13 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
     {
         var (doc, ns) = Load(xml);
 
-        // A pacs.008 is always sent by the payer's PSP to the payee's PSP, so the direction alone
-        // says which party is ours. Only the first transaction is read: it is the one that keys the row.
-        if (msgType == "pacs.008")
-        {
-            var party = sentByBank ? "Dbtr" : "Cdtr";
-            return FirstPartyDocument(doc, ns, $"(//*[local-name()='CdtTrfTxInf'])[1]/*[local-name()='{party}']");
-        }
+        // Same side as ExtractCustomerAccount, so a row's document and account always name one party.
+        var party = CustomerIsDebtor(doc, ns, msgType, sentByBank) ? "Dbtr" : "Cdtr";
 
-        // Other types: the party whose agent is the bank, identified by its ISPB in the AppHdr.
-        var bankIspb = SelectText(doc, ns,
-            $"//*[local-name()='AppHdr']/*[local-name()='{(sentByBank ? "Fr" : "To")}']" +
-            "/*[local-name()='FIId']/*[local-name()='FinInstnId']/*[local-name()='Othr']/*[local-name()='Id']");
-        if (bankIspb is null || bankIspb.Contains('\''))
-            return null;
-
-        // Ordered so that, if both agents are the bank, the direction default wins.
-        string[] parties = sentByBank ? ["Dbtr", "Cdtr"] : ["Cdtr", "Dbtr"];
-        foreach (var party in parties)
-        {
-            var owner = $"//*[*[local-name()='{party}Agt']/*[local-name()='FinInstnId']" +
-                        $"/*[local-name()='ClrSysMmbId']/*[local-name()='MmbId']='{bankIspb}']" +
-                        $"/*[local-name()='{party}']";
-            var document = FirstPartyDocument(doc, ns, owner);
-            if (document is not null)
-                return document;
-        }
-        return null;
+        // pacs.008: only the first transaction is read — it is the one that keys the row.
+        return msgType == "pacs.008"
+            ? FirstPartyDocument(doc, ns, $"(//*[local-name()='CdtTrfTxInf'])[1]/*[local-name()='{party}']")
+            : FirstPartyDocument(doc, ns, $"//*[local-name()='{party}']");
     }
 
     // First valid CPF/CNPJ, in document order, among the parties matched by the XPath:
@@ -177,6 +157,18 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
     public (string? Branch, string? Account, string? Ispb) ExtractCustomerAccount(string xml, string msgType, bool sent)
     {
         var (doc, ns) = Load(xml);
+        var side = CustomerIsDebtor(doc, ns, msgType, sent) ? "Dbtr" : "Cdtr";
+        var accountXPath = $"//*[local-name()='{side}Acct']/*[local-name()='Id']/*[local-name()='Othr']";
+        return (
+            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Issr']")),
+            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Id']")),
+            NullIfEmpty(SelectText(doc, ns, AgentIspbXPath(side))));
+    }
+
+    // Which party (Dbtr or Cdtr) is the bank's own customer — shared by ExtractCustomerAccount and
+    // ExtractCustomerDocument so both columns of a row describe the same party.
+    private static bool CustomerIsDebtor(XmlDocument doc, XmlNamespaceManager ns, string msgType, bool sent)
+    {
         var debtorIspb = SelectText(doc, ns, AgentIspbXPath("Dbtr"));
         var creditorIspb = SelectText(doc, ns, AgentIspbXPath("Cdtr"));
 
@@ -192,16 +184,9 @@ public sealed partial class SpiXmlParser : ISpiXmlParser
         // Header matches neither agent (or both): fall back on the direction — the bank pays what it
         // sends and is paid what it receives. pacs.004 carries the agents of the returned payment
         // (OrgnlTxRef), so there the bank returning the money is the original creditor agent.
-        var customerIsDebtor = debtorIsOwn != creditorIsOwn
+        return debtorIsOwn != creditorIsOwn
             ? debtorIsOwn
             : sent != (msgType == "pacs.004");
-
-        var side = customerIsDebtor ? "Dbtr" : "Cdtr";
-        var accountXPath = $"//*[local-name()='{side}Acct']/*[local-name()='Id']/*[local-name()='Othr']";
-        return (
-            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Issr']")),
-            NullIfEmpty(SelectText(doc, ns, accountXPath + "/*[local-name()='Id']")),
-            NullIfEmpty(customerIsDebtor ? debtorIspb : creditorIspb));
     }
 
     private static string AgentIspbXPath(string side) =>

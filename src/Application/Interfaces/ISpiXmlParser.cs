@@ -38,11 +38,9 @@ public interface ISpiXmlParser
 
     /// <summary>
     /// Returns the CPF/CNPJ of the bank's own customer in the message (punctuation removed,
-    /// upper-cased), or null when the message names no such party. The customer is the party
-    /// (<c>Dbtr</c>/<c>Cdtr</c>, <c>Id/PrvtId|OrgId/Othr/Id</c>) whose agent is the bank:
-    /// pacs.008 → <c>Dbtr</c> when <paramref name="sentByBank"/>, <c>Cdtr</c> otherwise; other
-    /// types → the party whose <c>DbtrAgt</c>/<c>CdtrAgt</c> ISPB is the bank's ISPB in the
-    /// AppHdr (<c>Fr</c> when sent by the bank, <c>To</c> when received).
+    /// upper-cased), or null when the message names no such party. Read from
+    /// <c>Dbtr</c>/<c>Cdtr</c> <c>Id/PrvtId|OrgId/Othr/Id</c> (first transaction for pacs.008), on the
+    /// same side as <see cref="ExtractCustomerAccount"/> picks, so both describe one party.
     /// </summary>
     string? ExtractCustomerDocument(string xml, string msgType, bool sentByBank);
 
